@@ -1,36 +1,39 @@
 # Particle Carousel
 
-A clean, dependency-free demo of a **particle-based logo carousel** using canvas particle morphing transitions. Designed to be deployed instantly on **Cloudflare Pages** (or any static host).
+A **single-file, dependency-free** demo of a particle-based logo carousel with canvas morphing transitions. Each logo is a real SVG rendered into a cloud of coloured particles. Designed to deploy instantly on **Cloudflare Pages** (or any static host).
+
+Inspired by [Codrops/ParticleEffectsButtons](https://tympanus.net/Development/ParticleEffectsButtons/).
 
 ## Features
 
-- **Fake captcha intro** — upon completion the particle cloud explodes and reforms into the first logo.
-- **Particle physics** — particles float in space with realistic spring-damper physics between each morph.
-- **Logo carousel** — Spotify → Apple Music → TikTok → YouTube → Gallery, each with branded particle colours.
-- **Swipe / drag / arrow-key** navigation between carousel items.
-- **Drag-and-drop** any PNG, JPEG, GIF, or SVG onto the canvas to sample it into particles instantly.
+- **Real image sampling** — logos are inline SVGs rendered to a canvas; every non-transparent pixel becomes a coloured particle that retains the original pixel colour.
+- **Spring-physics morphing** — particles spring toward their new targets with damping and subtle random drift for a floating-in-space feel.
+- **Logo carousel** — Spotify → Apple Music → TikTok → YouTube (extend the `DEFAULT_LOGOS` array with any SVG, PNG, GIF, or JPEG).
+- **Click · Swipe · Arrow-key** navigation between slides.
+- **Drag-and-drop / file picker** — drop or load any image to instantly sample it into particles.
+- **One file** — all HTML, CSS, and JS live in `index.html`; easy to read and extend.
 - **No dependencies** — pure vanilla JavaScript + Canvas 2D API.
-- **Responsive** — adapts to any screen size or DPI.
+- **Responsive** — adapts to any screen size.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `index.html` | Main page: canvas, fake captcha overlay, carousel UI |
-| `style.css` | Modern dark space-like styles |
-| `particlecarousel.js` | Core particle engine — sampling, physics, morphing |
-| `assets/` | Placeholder — drop your own PNG/GIF/SVG logos here |
+| `index.html` | **Everything** — self-contained demo (HTML + CSS + JS inline) |
+| `style.css` | Standalone CSS module (used by the modular build in `particlecarousel.js`) |
+| `particlecarousel.js` | Standalone JS module (alternative modular approach) |
+| `assets/` | Drop your own PNG/GIF/SVG logos here for the modular build |
+
+> **Quick start:** just open `index.html` in a browser — no server needed.
 
 ## Quick Start
 
 ```bash
-# Clone and open locally
 git clone https://github.com/indrolend/particlecarousel
 cd particlecarousel
-open index.html   # or: python -m http.server 8080
+open index.html          # macOS
+# or:  python -m http.server 8080
 ```
-
-No build step required.
 
 ## Deploy to Cloudflare Pages
 
@@ -40,41 +43,51 @@ No build step required.
 4. Leave **Build command** empty and set **Output directory** to `/` (root).
 5. Click **Save and Deploy**.
 
-That's it — your particle carousel is live at `https://<project>.pages.dev`.
+Your carousel will be live at `https://<project>.pages.dev`.
 
-## Customising Platforms
+## Adding Your Own Logos
 
-Edit the `PLATFORMS` array at the top of `particlecarousel.js`:
+Edit the `DEFAULT_LOGOS` array near the top of the `<script>` block in `index.html`:
 
 ```js
-const PLATFORMS = [
+const DEFAULT_LOGOS = [
   {
-    key: 'spotify',
-    label: 'SPOTIFY',
-    colors: ['#1DB954', '#1ed760', '#158a3e', '#fff'],
-    url: 'https://open.spotify.com/',
-    icon: 'spotify',
+    label: 'My Logo',
+    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+      <!-- your SVG markup here -->
+    </svg>`,
   },
-  // add more entries…
+  // …or use a remote URL (server must send Access-Control-Allow-Origin: *)
+  // { label: 'Remote', url: 'https://example.com/logo.png' },
 ];
 ```
 
-## Using Your Own Images
+## Using Your Own Images at Runtime
 
-Drag and drop any image file onto the canvas while the carousel is running. The engine samples the image pixels into a particle cloud and morphs the current cloud into the new shape.
+Drag and drop **any PNG, JPEG, GIF, or SVG** onto the canvas, or click **📁 Load images** to open a file picker. The engine samples the image pixels into a particle cloud and morphs into it instantly.
+
+## Tuning Physics
+
+At the top of the `<script>` block:
+
+```js
+const SPRING     = 0.055;  // pull strength toward target (higher = snappier)
+const DAMPING    = 0.82;   // friction per frame (lower = bouncier)
+const DRIFT      = 0.30;   // random drift while floating
+const PART_SIZE  = 3.2;    // particle radius in px
+```
 
 ## JavaScript API
 
 ```js
-// Navigate programmatically
-ParticleCarousel.next();
-ParticleCarousel.prev();
-ParticleCarousel.goTo(2);   // zero-based index
+ParticleCarousel.next();          // advance to next slide
+ParticleCarousel.prev();          // go to previous slide
+ParticleCarousel.goTo(2);         // jump to zero-based index
 
-// Load an HTMLImageElement as a particle cloud
+// Programmatically add a slide from an HTMLImageElement
 const img = new Image();
 img.src = 'mylogo.png';
-img.onload = () => ParticleCarousel.loadImage(img);
+img.onload = () => ParticleCarousel.loadImage(img, 'My Logo');
 ```
 
 ## License
