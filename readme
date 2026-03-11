@@ -1,0 +1,22 @@
+# Particle Button Demo
+
+Minimal, deployable demo of immersive particle button effects (inspired by [codrops/ParticleEffectsButtons](https://tympanus.net/Development/ParticleEffectsButtons/)).
+
+## Features
+
+- Modern, lightweight, no dependencies
+- Particle burst effect on button click (works for any button)
+- Responsive layout and effect
+- Easy to extend for more SPA transitions
+
+## Usage
+
+- Click the button to see the effect.
+- Edit `index.html` and add more `.particle-btn`s as needed.
+- Customize the parameters in `particle-button.js` for different styles.
+- Drop GIFs or images into `assets/` for further experiments.
+
+## Deploy
+
+- Ready for Cloudflare Pages & other static hosting.
+- Just push to your repo, connect on [Cloudflare Pages](https://pages.cloudflare.com/), and go!
