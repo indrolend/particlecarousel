@@ -1,14 +1,14 @@
 # Particle Carousel
 
-A **single-file, dependency-free** demo of a particle-based logo carousel with canvas morphing transitions. Each logo is a real SVG rendered into a cloud of coloured particles. Designed to deploy instantly on **Cloudflare Pages** (or any static host).
+A **single-file, dependency-free** demo of a particle-based logo carousel with canvas morphing transitions. Each logo is a real GIF from the `assets/` folder rendered into a cloud of coloured particles. Designed to deploy instantly on **Cloudflare Pages** (or any static host).
 
 Inspired by [Codrops/ParticleEffectsButtons](https://tympanus.net/Development/ParticleEffectsButtons/).
 
 ## Features
 
-- **Real image sampling** — logos are inline SVGs rendered to a canvas; every non-transparent pixel becomes a coloured particle that retains the original pixel colour.
+- **Real GIF sampling** — logo GIFs from `assets/` are rendered to a canvas; every non-transparent pixel becomes a coloured particle that retains the original pixel colour.
 - **Spring-physics morphing** — particles spring toward their new targets with damping and subtle random drift for a floating-in-space feel.
-- **Logo carousel** — Spotify → Apple Music → TikTok → YouTube (extend the `DEFAULT_LOGOS` array with any SVG, PNG, GIF, or JPEG).
+- **Logo carousel** — Spotify → Apple Music → TikTok → YouTube → Instagram → Bandcamp (extend the `DEFAULT_LOGOS` array with any GIF, PNG, or SVG in `assets/`).
 - **Click · Swipe · Arrow-key** navigation between slides.
 - **Drag-and-drop / file picker** — drop or load any image to instantly sample it into particles.
 - **One file** — all HTML, CSS, and JS live in `index.html`; easy to read and extend.
@@ -20,9 +20,9 @@ Inspired by [Codrops/ParticleEffectsButtons](https://tympanus.net/Development/Pa
 | File | Purpose |
 |---|---|
 | `index.html` | **Everything** — self-contained demo (HTML + CSS + JS inline) |
-| `style.css` | Standalone CSS module (used by the modular build in `particlecarousel.js`) |
-| `particlecarousel.js` | Standalone JS module (alternative modular approach) |
-| `assets/` | Drop your own PNG/GIF/SVG logos here for the modular build |
+| `style.css` | Standalone CSS for the modular build (used alongside `particlecarousel.js`) |
+| `particlecarousel.js` | Standalone JS module — alternative to the single-file approach |
+| `assets/` | GIF logo files: Spotifylogospin, Applemusiclogospin, Tiktoklogospin, Youtubelogospin, Instagramlogospin, Bandcamplogospin |
 
 > **Quick start:** just open `index.html` in a browser — no server needed.
 
@@ -47,20 +47,18 @@ Your carousel will be live at `https://<project>.pages.dev`.
 
 ## Adding Your Own Logos
 
-Edit the `DEFAULT_LOGOS` array near the top of the `<script>` block in `index.html`:
+Drop a GIF/PNG/SVG into the `assets/` folder and add a matching entry to `DEFAULT_LOGOS` in the `<script>` block of `index.html`:
 
 ```js
 const DEFAULT_LOGOS = [
-  {
-    label: 'My Logo',
-    svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-      <!-- your SVG markup here -->
-    </svg>`,
-  },
-  // …or use a remote URL (server must send Access-Control-Allow-Origin: *)
-  // { label: 'Remote', url: 'https://example.com/logo.png' },
+  { label: 'Spotify',     src: 'assets/Spotifylogospin.gif'    },
+  { label: 'Apple Music', src: 'assets/Applemusiclogospin.gif' },
+  // Add your own:
+  { label: 'My Brand',    src: 'assets/mybrand.gif'            },
 ];
 ```
+
+The engine samples every non-transparent pixel of each image into a coloured particle, so the particle cloud will faithfully reflect the colours and shape of the GIF frame captured at load time.
 
 ## Using Your Own Images at Runtime
 

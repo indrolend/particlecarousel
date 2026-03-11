@@ -2,18 +2,18 @@
 <!--
   Particle Carousel — single self-contained file, no dependencies.
   ─────────────────────────────────────────────────────────────────
-  Each "slide" is a real SVG (or any image/GIF you drop in) that is
-  rendered to an offscreen canvas and sampled pixel-by-pixel.  Every
+  Each slide is a GIF (or any image) in assets/ that is rendered to
+  an offscreen canvas and sampled pixel-by-pixel.  Every
   non-transparent pixel becomes a coloured particle.  Slides morph
   into each other with spring-physics.
 
   Inspired by Codrops/ParticleEffectsButtons.
   Deploy as-is to Cloudflare Pages (or any static host) — just push
-  this file to the repo root.
+  this repo to a static host and it works.
 
   ── Extending ──────────────────────────────────────────────────
-  • Add slides: push objects to DEFAULT_LOGOS with a `label` and a
-    `svg` string (or set `url` instead for a remote image).
+  • Add slides: drop a GIF/PNG/SVG into assets/ and add an entry to
+    DEFAULT_LOGOS with { label, src } pointing to the file.
   • Tune physics: edit SPRING, DAMPING, DRIFT at the top of the script.
   • Full JS API: ParticleCarousel.next() / .prev() / .goTo(n) / .loadImage(img)
 -->
@@ -149,72 +149,16 @@
     // Higher = denser cloud (more CPU); lower = sparser cloud.
     const TARGET_PARTICLE_DENSITY = 700;
 
-    // ── Default slides (inline SVG strings) ──────────────────────────────
-    // Each SVG is rendered to an offscreen canvas; particles get the actual
-    // pixel colours.  Replace `svg` with `url: 'https://…'` for remote images
-    // (server must send Access-Control-Allow-Origin: *).
+    // ── Default slides ────────────────────────────────────────────────────
+    // Drop new GIF/PNG/SVG files into assets/ and add a matching entry here.
+    // Each entry: { label: string, src: 'assets/<filename>' }
     const DEFAULT_LOGOS = [
-      {
-        label: 'Spotify',
-        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-          <circle cx="100" cy="100" r="96" fill="#1DB954"/>
-          <path d="M44 80 Q100 64 156 80"
-                stroke="white" stroke-width="13" fill="none" stroke-linecap="round"/>
-          <path d="M50 104 Q100 88 150 104"
-                stroke="white" stroke-width="11" fill="none" stroke-linecap="round"/>
-          <path d="M56 128 Q100 113 144 128"
-                stroke="white" stroke-width="9"  fill="none" stroke-linecap="round"/>
-        </svg>`,
-      },
-      {
-        label: 'Apple Music',
-        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-          <defs>
-            <linearGradient id="amg" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%"   stop-color="#FC3C44"/>
-              <stop offset="100%" stop-color="#D90429"/>
-            </linearGradient>
-          </defs>
-          <circle cx="100" cy="100" r="96" fill="url(#amg)"/>
-          <!-- Double music note -->
-          <rect x="112" y="58" width="13" height="62" rx="6" fill="white"/>
-          <rect x="112" y="58" width="42" height="13" rx="6" fill="white"/>
-          <rect x="141" y="58" width="13" height="44" rx="6" fill="white"/>
-          <ellipse cx="90"  cy="134" rx="24" ry="16" fill="white"
-                   transform="rotate(-18 90 134)"/>
-          <ellipse cx="119" cy="122" rx="24" ry="16" fill="white"
-                   transform="rotate(-18 119 122)"/>
-        </svg>`,
-      },
-      {
-        label: 'TikTok',
-        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-          <circle cx="100" cy="100" r="96" fill="#010101"/>
-          <!-- Red shadow layer -->
-          <rect x="82" y="46" width="18" height="82" rx="9" fill="#FF0050"/>
-          <path d="M100 46 Q126 46 132 68 Q148 64 152 82"
-                stroke="#FF0050" stroke-width="11" fill="none" stroke-linecap="round"/>
-          <ellipse cx="76" cy="146" rx="22" ry="16" fill="none"
-                   stroke="#FF0050" stroke-width="14"/>
-          <!-- White main -->
-          <rect x="86" y="50" width="18" height="78" rx="9" fill="white"/>
-          <path d="M104 50 Q130 50 136 72 Q152 68 156 86"
-                stroke="white" stroke-width="9"  fill="none" stroke-linecap="round"/>
-          <ellipse cx="80" cy="146" rx="22" ry="16" fill="none"
-                   stroke="white" stroke-width="12"/>
-          <!-- Cyan accent -->
-          <rect x="90" y="54" width="14" height="70" rx="7" fill="#00F2EA"/>
-          <ellipse cx="78" cy="146" rx="18" ry="12" fill="none"
-                   stroke="#00F2EA" stroke-width="6"/>
-        </svg>`,
-      },
-      {
-        label: 'YouTube',
-        svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
-          <rect x="6" y="50" width="188" height="100" rx="22" fill="#FF0000"/>
-          <polygon points="78,68 138,100 78,132" fill="white"/>
-        </svg>`,
-      },
+      { label: 'Spotify',     src: 'assets/Spotifylogospin.gif'    },
+      { label: 'Apple Music', src: 'assets/Applemusiclogospin.gif' },
+      { label: 'TikTok',      src: 'assets/Tiktoklogospin.gif'     },
+      { label: 'YouTube',     src: 'assets/Youtubelogospin.gif'    },
+      { label: 'Instagram',   src: 'assets/Instagramlogospin.gif'  },
+      { label: 'Bandcamp',    src: 'assets/Bandcamplogospin.gif'   },
     ];
 
     // ── Canvas + state ────────────────────────────────────────────────────
@@ -533,17 +477,34 @@
       if (Math.abs(d) > 50) { d < 0 ? next() : prev(); }
     }, { passive: true });
 
-    // ── Bootstrap: load default SVG logos ────────────────────────────────
-    // SVG blobs are rendered to Image objects, then sampled as particle clouds.
+    // ── Bootstrap: load logos from assets/ ───────────────────────────────
+    // Loads each GIF/image by path.  Falls back to svgToImage() if an entry
+    // has a `svg` string instead of a `src` path (backwards compatibility).
     (async function () {
+      function imgFromSrc(src) {
+        return new Promise(function (resolve) {
+          const img  = new Image();
+          img.onload  = function () { resolve(img); };
+          img.onerror = function () { resolve(null); };
+          img.src     = src;
+        });
+      }
+
       const imgs   = [];
       const labels = [];
       for (const logo of DEFAULT_LOGOS) {
         try {
-          imgs.push(await svgToImage(logo.svg));
-          labels.push(logo.label);
+          const img = logo.src
+            ? await imgFromSrc(logo.src)
+            : await svgToImage(logo.svg);
+          if (img) {
+            imgs.push(img);
+            labels.push(logo.label);
+          } else {
+            console.warn('Particle Carousel: failed to load "' + logo.label + '"');
+          }
         } catch (e) {
-          console.warn('Particle Carousel: failed to load logo "' + logo.label + '"', e);
+          console.warn('Particle Carousel: failed to load "' + logo.label + '"', e);
         }
       }
       if (imgs.length === 0) {
