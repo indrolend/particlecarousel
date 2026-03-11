@@ -2,14 +2,16 @@
 <!--
   Particle Carousel — single self-contained file, no dependencies.
   ─────────────────────────────────────────────────────────────────
-  Each slide is a GIF (or any image) in assets/ that is rendered to
-  an offscreen canvas and sampled pixel-by-pixel.  Every
-  non-transparent pixel becomes a coloured particle.  Slides morph
-  into each other with spring-physics.
+  Three-phase animation per slide:
+    1. IDLE    — The GIF plays as a live animated image overlay.
+    2. TRIGGER — User navigates: GIF fades out, the particle cloud
+                 (always maintained beneath it) bursts and morphs
+                 toward the next slide's cloud via spring-physics.
+    3. SETTLE  — Particles reach their new targets; the next GIF
+                 fades in and the loop begins again.
 
   Inspired by Codrops/ParticleEffectsButtons.
-  Deploy as-is to Cloudflare Pages (or any static host) — just push
-  this repo to a static host and it works.
+  Deploy as-is to Cloudflare Pages (or any static host).
 
   ── Extending ──────────────────────────────────────────────────
   • Add slides: drop a GIF/PNG/SVG into assets/ and add an entry to
@@ -102,12 +104,30 @@
       z-index: 20; letter-spacing: 0.1em;
     }
     body.dragging #drop-overlay { opacity: 1; }
+
+    /* ── Animated GIF overlay (idle state) ───────────────────────────────── */
+    /* Positioned to match the particle cloud (same centre, same max size).   */
+    #gif-overlay {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      max-width:  min(70vw, 420px);
+      max-height: min(65vh, 420px);
+      object-fit: contain;
+      pointer-events: none;
+      z-index: 2;           /* above canvas, below controls/label */
+      opacity: 0;
+      transition: opacity 400ms ease;   /* keep in sync with GIF_FADE_MS */
+    }
+    #gif-overlay.visible { opacity: 1; }
   </style>
 </head>
 <body>
 
   <!-- Full-screen canvas — particles are drawn here -->
   <canvas id="canvas"></canvas>
+
+  <!-- Animated GIF overlay — visible during idle; hidden during transitions -->
+  <img id="gif-overlay" alt="" aria-hidden="true" />
 
   <!-- Controls: file picker + prev / next buttons -->
   <div id="controls">
@@ -149,6 +169,12 @@
     // Higher = denser cloud (more CPU); lower = sparser cloud.
     const TARGET_PARTICLE_DENSITY = 700;
 
+    // ── GIF transition timing ─────────────────────────────────────────────
+    // GIF_FADE_MS must match the CSS `transition: opacity` duration on #gif-overlay.
+    const GIF_FADE_MS       = 400;   // ms — CSS opacity fade in/out
+    const SETTLE_POLL_MS    = 80;    // ms — how often to poll for morph completion
+    const SETTLE_TIMEOUT_MS = 5000;  // ms — safety limit: show GIF even if morph stalls
+
     // ── Default slides ────────────────────────────────────────────────────
     // Drop new GIF/PNG/SVG files into assets/ and add a matching entry here.
     // Each entry: { label: string, src: 'assets/<filename>' }
@@ -162,19 +188,21 @@
     ];
 
     // ── Canvas + state ────────────────────────────────────────────────────
-    const canvas  = document.getElementById('canvas');
-    const ctx     = canvas.getContext('2d');
-    const labelEl = document.getElementById('label');
-    const dotsEl  = document.getElementById('dots');
-    const countEl = document.getElementById('img-count');
+    const canvas      = document.getElementById('canvas');
+    const ctx         = canvas.getContext('2d');
+    const labelEl     = document.getElementById('label');
+    const dotsEl      = document.getElementById('dots');
+    const countEl     = document.getElementById('img-count');
+    const gifOverlay  = document.getElementById('gif-overlay');
 
     let W, H;
-    // slides[i] = { label: string, img: HTMLImageElement, cloud: [{wx,wy,col}] }
-    let slides     = [];
-    let particles  = [];   // active particle array
-    let currentIdx = 0;
-    let morphing   = false;
-    let rafId      = null;
+    // slides[i] = { label, img, cloud, gifSrc }
+    let slides        = [];
+    let particles     = [];   // active particle array
+    let currentIdx    = 0;
+    let morphing      = false; // true while particles are springing to targets
+    let transitioning = false; // true from goTo start until next GIF appears
+    let rafId         = null;
 
     // ── Canvas resize ─────────────────────────────────────────────────────
     function resize() {
@@ -185,7 +213,15 @@
         slides.forEach(function (s) {
           if (s.img) s.cloud = sampleImage(s.img);
         });
-        if (!morphing) morphToCloud(slides[currentIdx].cloud);
+        if (!transitioning) {
+          if (gifOverlay.classList.contains('visible')) {
+            // GIF is showing — silently snap particles to new positions so
+            // they are correct when the next transition fires.
+            snapToCloud(slides[currentIdx].cloud);
+          } else {
+            morphToCloud(slides[currentIdx].cloud);
+          }
+        }
       }
     }
     window.addEventListener('resize', resize);
@@ -236,6 +272,62 @@
         img.onerror = function (e) { URL.revokeObjectURL(url); reject(e); };
         img.src     = url;
       });
+    }
+
+    // ── GIF overlay helpers ───────────────────────────────────────────────
+
+    // Show the GIF for `src` and restart it from frame 1.
+    function showGif(src) {
+      if (!src) return;
+      // Setting src resets the animation when the URL differs from the current.
+      // Clearing first guarantees a restart even for the same URL.
+      gifOverlay.src = '';
+      gifOverlay.src = src;
+      gifOverlay.classList.add('visible');
+    }
+
+    // Fade out the GIF and invoke `cb` once the CSS transition ends.
+    function hideGif(cb) {
+      if (!gifOverlay.classList.contains('visible')) { cb(); return; }
+      gifOverlay.classList.remove('visible');
+      setTimeout(cb, GIF_FADE_MS);
+    }
+
+    // Call `cb` once morphing is complete (or after SETTLE_TIMEOUT_MS safety timeout).
+    function waitForSettle(cb) {
+      let waited = 0;
+      (function poll() {
+        waited += SETTLE_POLL_MS;
+        if (!morphing || waited > SETTLE_TIMEOUT_MS) { cb(); return; }
+        setTimeout(poll, SETTLE_POLL_MS);
+      })();
+    }
+
+    // Silently move particles to `cloud` positions without burst or morph flag.
+    // Used during window resize when the GIF overlay is visible.
+    function snapToCloud(cloud) {
+      if (!cloud || cloud.length === 0) return;
+      const oldLen = particles.length;
+      const newLen = cloud.length;
+      for (let i = oldLen; i < newLen; i++) {
+        particles.push(makeParticle(
+          cloud[i].wx, cloud[i].wy, cloud[i].col,
+          cloud[i].wx, cloud[i].wy, cloud[i].col
+        ));
+        particles[particles.length - 1].vx = 0;
+        particles[particles.length - 1].vy = 0;
+      }
+      particles.length = newLen;
+      for (let i = 0; i < newLen; i++) {
+        particles[i].x      = cloud[i].wx;
+        particles[i].y      = cloud[i].wy;
+        particles[i].tx     = cloud[i].wx;
+        particles[i].ty     = cloud[i].wy;
+        particles[i].color  = cloud[i].col;
+        particles[i].tcolor = cloud[i].col;
+        particles[i].vx     = 0;
+        particles[i].vy     = 0;
+      }
     }
 
     // ── Dot indicators ────────────────────────────────────────────────────
@@ -385,49 +477,83 @@
 
     // ── Navigation ────────────────────────────────────────────────────────
     function goTo(idx) {
-      if (morphing || slides.length === 0) return;
-      currentIdx = ((idx % slides.length) + slides.length) % slides.length;
-      labelEl.textContent = slides[currentIdx].label;
-      countEl.textContent = (currentIdx + 1) + ' / ' + slides.length;
-      updateDots(currentIdx);
-      morphToCloud(slides[currentIdx].cloud);
+      if (transitioning || slides.length === 0) return;
+      const targetIdx = ((idx % slides.length) + slides.length) % slides.length;
+
+      transitioning = true;
+
+      // Phase 1: fade out current GIF to reveal particle cloud beneath it.
+      hideGif(function () {
+        // Phase 2: update slide state and morph particles to new cloud.
+        currentIdx = targetIdx;
+        labelEl.textContent = slides[currentIdx].label;
+        countEl.textContent = (currentIdx + 1) + ' / ' + slides.length;
+        updateDots(currentIdx);
+        morphToCloud(slides[currentIdx].cloud);
+
+        // Phase 3: wait for particles to settle, then show the next GIF.
+        waitForSettle(function () {
+          showGif(slides[currentIdx].gifSrc);
+          transitioning = false;
+        });
+      });
     }
     function next() { goTo(currentIdx + 1); }
     function prev() { goTo(currentIdx - 1); }
 
     // ── Load slides from an array of HTMLImageElements ────────────────────
-    function loadFromImages(imgs, labels) {
+    function loadFromImages(imgs, labels, srcs) {
       const valid = [];
       imgs.forEach(function (img, i) {
         if (!img) return;
         const cloud = sampleImage(img);
-        if (cloud.length > 0) valid.push({ label: labels[i] || ('Image ' + (i + 1)), img, cloud });
+        if (cloud.length > 0) valid.push({
+          label:  labels[i] || ('Image ' + (i + 1)),
+          img,
+          cloud,
+          gifSrc: (srcs && srcs[i]) || null,
+        });
       });
       if (valid.length === 0) return;
 
-      slides     = valid;
-      currentIdx = 0;
+      slides        = valid;
+      currentIdx    = 0;
+      transitioning = false;
+      gifOverlay.classList.remove('visible');
       buildDots();
       initFromCloud(slides[0].cloud);
+      morphing = true;   // particles start scattered; frame loop clears this when settled
       labelEl.textContent = slides[0].label;
       countEl.textContent = '1 / ' + slides.length;
-      if (!rafId) startAnim();
+      startAnim();       // always (re)start the animation loop
+
+      // Show the first GIF once the initial particle cloud has settled.
+      waitForSettle(function () {
+        showGif(slides[0].gifSrc);
+      });
     }
 
     // ── File picker + drag-and-drop ───────────────────────────────────────
     function handleFiles(files) {
       const arr = Array.from(files).filter(function (f) { return f.type.startsWith('image/'); });
       if (!arr.length) return;
-      const imgs   = new Array(arr.length);
-      const labels = arr.map(function (f) { return f.name.replace(/\.[^.]+$/, ''); });
-      let loaded   = 0;
+      const imgs    = new Array(arr.length);
+      const gifSrcs = new Array(arr.length);
+      const labels  = arr.map(function (f) { return f.name.replace(/\.[^.]+$/, ''); });
+      let loaded    = 0;
       arr.forEach(function (f, i) {
         const url = URL.createObjectURL(f);
         const img = new Image();
         img.onload = img.onerror = function () {
-          imgs[i] = img.complete && img.naturalWidth ? img : null;
-          URL.revokeObjectURL(url);
-          if (++loaded === arr.length) loadFromImages(imgs, labels);
+          if (img.complete && img.naturalWidth) {
+            imgs[i]    = img;
+            gifSrcs[i] = url;   // keep blob URL alive — used by gif-overlay
+          } else {
+            imgs[i]    = null;
+            gifSrcs[i] = null;
+            URL.revokeObjectURL(url);
+          }
+          if (++loaded === arr.length) loadFromImages(imgs, labels, gifSrcs);
         };
         img.src = url;
       });
@@ -492,6 +618,7 @@
 
       const imgs   = [];
       const labels = [];
+      const srcs   = [];
       for (const logo of DEFAULT_LOGOS) {
         try {
           const img = logo.src
@@ -500,6 +627,7 @@
           if (img) {
             imgs.push(img);
             labels.push(logo.label);
+            srcs.push(logo.src || null);
           } else {
             console.warn('Particle Carousel: failed to load "' + logo.label + '"');
           }
@@ -511,8 +639,7 @@
         labelEl.textContent = 'Drop an image to start';
         return;
       }
-      loadFromImages(imgs, labels);
-      startAnim();
+      loadFromImages(imgs, labels, srcs);
     })();
 
     // ── Public API ────────────────────────────────────────────────────────
@@ -520,11 +647,14 @@
       next:      next,
       prev:      prev,
       goTo:      goTo,
-      /** Load an HTMLImageElement directly as the next slide */
-      loadImage: function (img, label) {
+      /** Load an HTMLImageElement directly as the next slide.
+       *  @param {HTMLImageElement} img
+       *  @param {string}          [label]
+       *  @param {string}          [gifSrc]  URL/path shown in idle state */
+      loadImage: function (img, label, gifSrc) {
         const cloud = sampleImage(img);
         if (!cloud.length) return;
-        slides.push({ label: label || 'Custom', img: img, cloud: cloud });
+        slides.push({ label: label || 'Custom', img, cloud, gifSrc: gifSrc || null });
         buildDots();
         countEl.textContent = (currentIdx + 1) + ' / ' + slides.length;
       },
