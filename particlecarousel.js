@@ -24,6 +24,10 @@
   const ALPHA_THRESHOLD = 60;
   // Maximum stride when sub-sampling image pixels to avoid O(n²) work on large images.
   const MAX_SAMPLE_STEP = 8;
+  // Random lateral nudge per frame during gather phase.
+  // Breaks visible straight lines when many particles share the same row/column
+  // in a rectangular source image.
+  const GATHER_JITTER = 0.8; // max random acceleration (px/frame²) while morphing
 
   // ─── Platform definitions ──────────────────────────────────────────────────
   const PLATFORMS = [
@@ -434,6 +438,16 @@
         const dy = p.ty - p.y;
         p.vx += dx * SPRING_FORCE;
         p.vy += dy * SPRING_FORCE;
+
+        // During gathering: small distance-scaled jitter breaks visible straight
+        // lines that form when particles share row/column in a rectangular image.
+        if (morphing && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+          // Scale jitter with distance: full strength at ≥20 px away, zero at target.
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const j = Math.min(dist / 20, 1) * GATHER_JITTER;
+          p.vx += (Math.random() - 0.5) * j;
+          p.vy += (Math.random() - 0.5) * j;
+        }
 
         // Asymmetric damping — brake hard when overshooting to kill recoil bounce
         p.vx *= (dx * p.vx < 0) ? DAMPING_OVERSHOOT : DAMPING_FACTOR;

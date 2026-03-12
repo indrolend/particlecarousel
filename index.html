@@ -182,6 +182,10 @@
     const MAX_STEP             = 6;      // Max pixel stride for sampling (controls density)
     const BURST_V              = 4;      // Initial burst velocity on morph transition
     const PART_SIZE            = 3.2;    // Particle radius in CSS pixels
+    // Random lateral nudge applied per frame while particles are gathering.
+    // Breaks up visible straight lines that form when many particles share
+    // the same row/column in a rectangular source image.
+    const GATHER_JITTER        = 0.8;    // max random acceleration (px/frame²) during morph
     // Target number of particles to aim for when computing the adaptive sampling stride.
     // Higher = denser cloud (more CPU); lower = sparser cloud.
     const TARGET_PARTICLE_DENSITY = 700;
@@ -577,6 +581,17 @@
             const dy = p.ty - p.y;
             p.vx += dx * SPRING;
             p.vy += dy * SPRING;
+
+            // During gathering: add a small distance-scaled random nudge to break
+            // up the visible straight lines that appear when many particles share
+            // the same row or column in a rectangular source image.
+            if (morphing && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+              // Scale jitter with distance: full strength at ≥20 px away, zero at target.
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              const j = Math.min(dist / 20, 1) * GATHER_JITTER;
+              p.vx += (Math.random() - 0.5) * j;
+              p.vy += (Math.random() - 0.5) * j;
+            }
 
             // Damping — asymmetric: apply extra friction when the particle is
             // overshooting (velocity and displacement point in opposite directions)
