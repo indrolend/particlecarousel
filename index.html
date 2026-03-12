@@ -174,12 +174,13 @@
     // ── Physics constants ─────────────────────────────────────────────────
     // Tweak these to change the feel of the transitions.
     const SPRING               = 0.055;  // Spring coefficient: pulls particles toward target
-    const DAMPING              = 0.82;   // Velocity multiplier per frame (< 1 = friction)
+    const DAMPING              = 0.82;   // Velocity multiplier per frame when approaching target
+    const DAMPING_OVERSHOOT    = 0.65;   // Extra friction when velocity overshoots target (kills bounce)
     const DRIFT                = 0.30;   // Subtle random drift when floating in place
     const SETTLE_PCT           = 0.90;   // Fraction of particles settled → morph complete
     const ALPHA_MIN            = 55;     // Min pixel alpha (0–255) to become a particle
     const MAX_STEP             = 6;      // Max pixel stride for sampling (controls density)
-    const BURST_V              = 9;      // Initial burst velocity on morph transition
+    const BURST_V              = 4;      // Initial burst velocity on morph transition
     const PART_SIZE            = 3.2;    // Particle radius in CSS pixels
     // Target number of particles to aim for when computing the adaptive sampling stride.
     // Higher = denser cloud (more CPU); lower = sparser cloud.
@@ -577,9 +578,11 @@
             p.vx += dx * SPRING;
             p.vy += dy * SPRING;
 
-            // Damping (friction)
-            p.vx *= DAMPING;
-            p.vy *= DAMPING;
+            // Damping — asymmetric: apply extra friction when the particle is
+            // overshooting (velocity and displacement point in opposite directions)
+            // so it brakes hard instead of bouncing back.
+            p.vx *= (dx * p.vx < 0) ? DAMPING_OVERSHOOT : DAMPING;
+            p.vy *= (dy * p.vy < 0) ? DAMPING_OVERSHOOT : DAMPING;
 
             // Subtle drift once the particle is nearly at rest
             if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {

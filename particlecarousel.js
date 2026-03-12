@@ -10,8 +10,13 @@
   // ─── Physics / sampling constants ─────────────────────────────────────────
   // Spring force pulling each particle toward its target position.
   const SPRING_FORCE = 0.06;
-  // Velocity damping factor applied each frame (< 1 = friction).
+  // Velocity damping factor when approaching target (< 1 = friction).
   const DAMPING_FACTOR = 0.82;
+  // Extra friction applied when a particle overshoots its target (velocity and
+  // displacement in opposite directions).  Kills the recoil bounce.
+  const DAMPING_OVERSHOOT = 0.65;
+  // Initial random velocity burst given to particles when they receive new targets.
+  const BURST_VELOCITY = 4;
   // Fraction of particles that must be settled before the morph is considered done.
   // 0.92 leaves a small margin for stragglers that never reach sub-pixel precision.
   const SETTLE_THRESHOLD = 0.92;
@@ -386,8 +391,8 @@
       particles[i].ty = pt.wy;
       particles[i].tcolor = pt.col;
       // Give a small burst
-      particles[i].vx = (Math.random() - 0.5) * 10;
-      particles[i].vy = (Math.random() - 0.5) * 10;
+      particles[i].vx = (Math.random() - 0.5) * BURST_VELOCITY;
+      particles[i].vy = (Math.random() - 0.5) * BURST_VELOCITY;
     }
   }
 
@@ -430,9 +435,9 @@
         p.vx += dx * SPRING_FORCE;
         p.vy += dy * SPRING_FORCE;
 
-        // Damping
-        p.vx *= DAMPING_FACTOR;
-        p.vy *= DAMPING_FACTOR;
+        // Asymmetric damping — brake hard when overshooting to kill recoil bounce
+        p.vx *= (dx * p.vx < 0) ? DAMPING_OVERSHOOT : DAMPING_FACTOR;
+        p.vy *= (dy * p.vy < 0) ? DAMPING_OVERSHOOT : DAMPING_FACTOR;
 
         // Add subtle drift when settled (floating-in-space feel)
         if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
