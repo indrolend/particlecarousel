@@ -9,12 +9,12 @@
 
   // ─── Physics / sampling constants ─────────────────────────────────────────
   // Spring force pulling each particle toward its target position.
-  const SPRING_FORCE = 0.08;
+  const SPRING_FORCE = 0.11;
   // Velocity damping factor when approaching target (< 1 = friction).
   const DAMPING_FACTOR = 0.82;
   // Extra friction applied when a particle overshoots its target (velocity and
   // displacement in opposite directions).  Kills the recoil bounce.
-  const DAMPING_OVERSHOOT = 0.65;
+  const DAMPING_OVERSHOOT = 0.50;
   // Initial random velocity burst given to particles when they receive new targets.
   const BURST_VELOCITY = 4;
   // Fraction of particles that must be settled before the morph is considered done.

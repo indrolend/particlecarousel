@@ -173,9 +173,9 @@
 
     // ── Physics constants ─────────────────────────────────────────────────
     // Tweak these to change the feel of the transitions.
-    const SPRING               = 0.08;   // Spring coefficient: pulls particles toward target
+    const SPRING               = 0.11;   // Spring coefficient: pulls particles toward target
     const DAMPING              = 0.82;   // Velocity multiplier per frame when approaching target
-    const DAMPING_OVERSHOOT    = 0.65;   // Extra friction when velocity overshoots target (kills bounce)
+    const DAMPING_OVERSHOOT    = 0.50;   // Extra friction when velocity overshoots target (kills bounce)
     const DRIFT                = 0.30;   // Subtle random drift when floating in place
     const SETTLE_PCT           = 0.90;   // Fraction of particles settled → morph complete
     const ALPHA_MIN            = 55;     // Min pixel alpha (0–255) to become a particle
