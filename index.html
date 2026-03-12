@@ -247,9 +247,13 @@
     // ── Image → particle cloud ────────────────────────────────────────────
     // Renders `img` to an offscreen canvas, walks every `step`-th pixel,
     // and returns an array of { wx, wy, col } in world space.
+    // Images smaller than maxDim are NOT upscaled (ratio capped at 1) so
+    // the particle cloud exactly matches the element's CSS display size and
+    // the GIF canvas fully covers it during idle — preventing both layers
+    // from appearing simultaneously.
     function sampleImage(img) {
       const maxDim = Math.min(W * 0.70, H * 0.65, 420);
-      const ratio  = Math.min(maxDim / img.width, maxDim / img.height);
+      const ratio  = Math.min(maxDim / img.width, maxDim / img.height, 1);
       const dw     = Math.max(1, Math.round(img.width  * ratio));
       const dh     = Math.max(1, Math.round(img.height * ratio));
 
@@ -325,6 +329,7 @@
         anim.animateInCanvas(gifCanvas);
         // Brief delay so the first frame has been rendered before we show it.
         setTimeout(function () {
+          gifCanvas.style.display = '';  // clear any inline hide set during transition
           gifCanvas.classList.add('visible');
           finish();
         }, GIF_FIRST_FRAME_MS);
@@ -545,6 +550,7 @@
       // now showing particles at the exact same pixel positions, so the
       // switch is seamless.
       gifCanvas.classList.remove('visible');
+      gifCanvas.style.display = 'none';
 
       // Phase 2 — Update slide state and burst particles toward new cloud.
       currentIdx = targetIdx;
