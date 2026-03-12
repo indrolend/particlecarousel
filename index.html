@@ -1,91 +1,734 @@
 <!DOCTYPE html>
+<!--
+  Particle Carousel — single self-contained file.
+  ─────────────────────────────────────────────────────────────────
+  Three-phase animation per slide:
+    1. IDLE    — gifler renders the animated GIF into a canvas
+                 displayed on screen.  The particle canvas
+                 runs beneath it (invisible, but ready).
+    2. TRIGGER — User navigates: gifler stops (freezing the current
+                 frame), the live frame is sampled as a particle cloud,
+                 and those particles are placed at the exact pixel
+                 positions.  The GIF canvas is instantly hidden,
+                 revealing the particle layer.  Particles burst and
+                 spring-morph toward the next slide's cloud.
+    3. SETTLE  — Particles reach their targets; gifler loads and plays
+                 the next GIF, which appears on top ("solidifying").
+
+  Requires: gifler (vendored in assets/gifler.min.js from gifler@0.1.0,
+            Apache-2.0; CDN alternative: jsdelivr.net/npm/gifler@0.1.0).
+  Deploy as-is to Cloudflare Pages (or any static host).
+
+  ── Extending ──────────────────────────────────────────────────
+  • Add slides: drop a GIF/PNG/SVG into assets/ and add an entry to
+    DEFAULT_LOGOS with { label, src } pointing to the file.
+  • Tune physics: edit SPRING, DAMPING, DRIFT at the top of the script.
+  • Full JS API: ParticleCarousel.next() / .prev() / .goTo(n) / .loadImage(img)
+-->
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Particle Carousel</title>
-  <link rel="stylesheet" href="style.css" />
+  <!-- gifler: decodes animated GIFs frame-by-frame into a <canvas>.
+       CDN: https://cdn.jsdelivr.net/npm/gifler@0.1.0/gifler.min.js -->
+  <script src="assets/gifler.min.js"></script>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%; overflow: hidden;
+      background: #0a0d14; color: #fff;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    }
+
+    /* ── Full-screen canvas ───────────────────────────────────────────────── */
+    #canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; cursor: grab; }
+    #canvas:active { cursor: grabbing; }
+
+    /* ── Controls bar (top-centre) ────────────────────────────────────────── */
+    #controls {
+      position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+      z-index: 10; background: rgba(16, 20, 34, 0.92);
+      padding: 8px 18px; border-radius: 40px;
+      display: flex; align-items: center; gap: 10px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 4px 28px rgba(0, 0, 0, 0.55);
+    }
+    .ctrl-btn {
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      color: #fff; border-radius: 50%;
+      width: 34px; height: 34px; font-size: 1rem;
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: background 0.15s, transform 0.1s; user-select: none;
+    }
+    .ctrl-btn:hover  { background: rgba(255, 255, 255, 0.16); }
+    .ctrl-btn:active { transform: scale(0.92); }
+    #file-label {
+      cursor: pointer; font-size: 0.78rem;
+      color: rgba(255, 255, 255, 0.45); letter-spacing: 0.04em; white-space: nowrap;
+    }
+    #file-input { display: none; }
+    #img-count {
+      font-size: 0.78rem; color: rgba(255, 255, 255, 0.35);
+      min-width: 38px; text-align: center;
+    }
+
+    /* ── Current logo name ────────────────────────────────────────────────── */
+    #label {
+      position: fixed; top: 76px; left: 50%; transform: translateX(-50%);
+      font-size: clamp(1.1rem, 4vw, 2rem); font-weight: 800;
+      letter-spacing: 0.22em; text-transform: uppercase;
+      text-shadow: 0 2px 18px rgba(0, 0, 0, 0.75);
+      pointer-events: none; z-index: 5;
+    }
+
+    /* ── Navigation dots ──────────────────────────────────────────────────── */
+    #dots {
+      position: fixed; bottom: 58px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 8px; z-index: 5; pointer-events: none;
+    }
+    .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: rgba(255, 255, 255, 0.25);
+      transition: background 0.3s, transform 0.2s;
+    }
+    .dot.active { background: #fff; transform: scale(1.5); }
+
+    /* ── Bottom hint ──────────────────────────────────────────────────────── */
+    #hint {
+      position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+      font-size: 0.68rem; color: rgba(255, 255, 255, 0.2);
+      letter-spacing: 0.07em; pointer-events: none; z-index: 5; white-space: nowrap;
+    }
+
+    /* ── Drag-over overlay ────────────────────────────────────────────────── */
+    #drop-overlay {
+      position: fixed; inset: 0; background: rgba(10, 13, 20, 0.78);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.4rem; color: rgba(255, 255, 255, 0.6);
+      pointer-events: none; opacity: 0; transition: opacity 0.2s;
+      z-index: 20; letter-spacing: 0.1em;
+    }
+    body.dragging #drop-overlay { opacity: 1; }
+
+    /* ── Animated GIF canvas (idle state) ───────────────────────────────── */
+    /* gifler renders the GIF into this canvas; it is shown over the particle */
+    /* canvas during idle and instantly hidden when a transition fires.        */
+    #gif-canvas {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      /* CSS scales the canvas element proportionally for display.             */
+      /* gifler sets the intrinsic width/height to the GIF's native dimensions.*/
+      max-width:  min(70vw, 420px);
+      max-height: min(65vh, 420px);
+      width: auto;
+      height: auto;
+      pointer-events: none;
+      z-index: 2;           /* above particle canvas, below controls/label */
+      display: none;
+    }
+    #gif-canvas.visible { display: block; }
+  </style>
 </head>
 <body>
 
-  <!-- ── Canvas ─────────────────────────────────────────── -->
-  <canvas id="pc-canvas"></canvas>
+  <!-- Full-screen canvas — particles are drawn here -->
+  <canvas id="canvas"></canvas>
 
-  <!-- ── Fake captcha overlay ───────────────────────────── -->
-  <div id="pc-captcha">
-    <div class="pc-captcha-box">
-      <h2>HUMAN VERIFICATION</h2>
-      <p>Select the tiles that contain a <strong>musical note</strong> to continue.</p>
-      <div class="pc-captcha-puzzle" id="pc-puzzle">
-        <!-- tiles injected by inline script below -->
-      </div>
-      <button id="pc-captcha-btn">VERIFY &amp; CONTINUE</button>
-    </div>
+  <!-- GIF canvas — gifler renders the animated GIF into this; shown in idle, hidden during transitions -->
+  <canvas id="gif-canvas" aria-hidden="true"></canvas>
+
+  <!-- Controls: file picker + prev / next buttons -->
+  <div id="controls">
+    <label id="file-label" for="file-input">📁 Load images</label>
+    <input type="file" id="file-input" multiple accept="image/*" />
+    <button class="ctrl-btn" id="prev" aria-label="Previous">&#8592;</button>
+    <span id="img-count"></span>
+    <button class="ctrl-btn" id="next" aria-label="Next">&#8594;</button>
   </div>
 
-  <!-- ── Carousel UI (hidden until captcha solved) ──────── -->
-  <div id="pc-ui" style="display:none">
-    <div id="pc-platform-label"></div>
+  <!-- Current slide name -->
+  <div id="label"></div>
 
-    <a id="pc-link" href="#" target="_blank" rel="noopener noreferrer"
-       style="display:none">Visit</a>
+  <!-- Navigation dots (built by JS) -->
+  <div id="dots"></div>
 
-    <div class="pc-bottom">
-      <!-- Dot indicators generated by script -->
-      <div class="pc-dots" id="pc-dots"></div>
-      <div class="pc-arrows">
-        <button class="pc-arrow" id="pc-prev" aria-label="Previous">&#8592;</button>
-        <button class="pc-arrow" id="pc-next" aria-label="Next">&#8594;</button>
-      </div>
-    </div>
-  </div>
+  <!-- Hint text -->
+  <div id="hint">Click · Swipe · Arrow keys to navigate &nbsp;|&nbsp; Drop or load your own images</div>
 
-  <!-- ── Drop hint overlay ──────────────────────────────── -->
-  <div id="pc-drop-msg">Drop an image to particulate it</div>
-
-  <!-- ── Hint bar ───────────────────────────────────────── -->
-  <div id="pc-hint">Swipe · Drag · Arrow keys &nbsp;|&nbsp; Drop an image to load it</div>
+  <!-- Drop overlay -->
+  <div id="drop-overlay">Drop image to particulate it</div>
 
   <script>
-    // ── Build fake captcha puzzle tiles ──
-    (function () {
-      const emojis = ['🎵', '🎸', '🎹', '🎤', '🎵', '🥁', '🎷', '🎻', '🎵'];
-      const puzzle = document.getElementById('pc-puzzle');
-      emojis.forEach(function (em, i) {
-        const tile = document.createElement('div');
-        tile.className = 'pc-puzzle-tile';
-        tile.textContent = em;
-        tile.dataset.index = i;
-        tile.addEventListener('click', function () {
-          tile.classList.toggle('selected');
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Particle Carousel — core engine
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // ── Physics constants ─────────────────────────────────────────────────
+    // Tweak these to change the feel of the transitions.
+    const SPRING               = 0.055;  // Spring coefficient: pulls particles toward target
+    const DAMPING              = 0.82;   // Velocity multiplier per frame (< 1 = friction)
+    const DRIFT                = 0.30;   // Subtle random drift when floating in place
+    const SETTLE_PCT           = 0.90;   // Fraction of particles settled → morph complete
+    const ALPHA_MIN            = 55;     // Min pixel alpha (0–255) to become a particle
+    const MAX_STEP             = 6;      // Max pixel stride for sampling (controls density)
+    const BURST_V              = 9;      // Initial burst velocity on morph transition
+    const PART_SIZE            = 3.2;    // Particle radius in CSS pixels
+    // Target number of particles to aim for when computing the adaptive sampling stride.
+    // Higher = denser cloud (more CPU); lower = sparser cloud.
+    const TARGET_PARTICLE_DENSITY = 700;
+
+    // ── GIF transition timing ─────────────────────────────────────────────
+    const SETTLE_POLL_MS    = 80;    // ms — how often to poll for morph completion
+    const SETTLE_TIMEOUT_MS = 5000;  // ms — safety limit: show GIF even if morph stalls
+    // ms to wait after gifler's animateInCanvas() before revealing the canvas.
+    // gifler schedules its first draw via requestAnimationFrame; this delay
+    // ensures at least one frame has been painted before the canvas is shown.
+    const GIF_FIRST_FRAME_MS  = 60;
+    // ms before giving up waiting for a GIF to load over the network.
+    const GIF_LOAD_TIMEOUT_MS = 10000;
+
+    // ── Default slides ────────────────────────────────────────────────────
+    // Drop new GIF/PNG/SVG files into assets/ and add a matching entry here.
+    // Each entry: { label: string, src: 'assets/<filename>' }
+    const DEFAULT_LOGOS = [
+      { label: 'Spotify',     src: 'assets/Spotifylogospin.gif'    },
+      { label: 'Apple Music', src: 'assets/Applemusiclogospin.gif' },
+      { label: 'TikTok',      src: 'assets/Tiktoklogospin.gif'     },
+      { label: 'YouTube',     src: 'assets/Youtubelogospin.gif'    },
+      { label: 'Instagram',   src: 'assets/Instagramlogospin.gif'  },
+      { label: 'Bandcamp',    src: 'assets/Bandcamplogospin.gif'   },
+    ];
+
+    // ── Canvas + state ────────────────────────────────────────────────────
+    const canvas      = document.getElementById('canvas');
+    const ctx         = canvas.getContext('2d');
+    const labelEl     = document.getElementById('label');
+    const dotsEl      = document.getElementById('dots');
+    const countEl     = document.getElementById('img-count');
+    const gifCanvas   = document.getElementById('gif-canvas');
+
+    let W, H;
+    // slides[i] = { label, img, cloud, gifSrc }
+    let slides        = [];
+    let particles     = [];   // active particle array
+    let currentIdx    = 0;
+    let morphing      = false; // true while particles are springing to targets
+    let transitioning = false; // true from goTo start until next GIF appears
+    let gifPlayer     = null;  // current gifler Animator instance
+    let rafId         = null;
+
+    // ── Canvas resize ─────────────────────────────────────────────────────
+    function resize() {
+      W = canvas.width  = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      // Regenerate clouds for new centre position
+      if (slides.length > 0) {
+        slides.forEach(function (s) {
+          if (s.img) s.cloud = sampleImage(s.img);
         });
-        puzzle.appendChild(tile);
-      });
-    })();
+        if (!transitioning) {
+          if (gifCanvas.classList.contains('visible')) {
+            // GIF is showing — silently snap particles to new positions so
+            // they are correct when the next transition fires.
+            snapToCloud(slides[currentIdx].cloud);
+          } else {
+            morphToCloud(slides[currentIdx].cloud);
+          }
+        }
+      }
+    }
+    window.addEventListener('resize', resize);
+    resize();
 
-    // ── Build carousel dot indicators ──
-    (function () {
-      const PLATFORMS = ['SPOTIFY', 'APPLE MUSIC', 'TIKTOK', 'YOUTUBE', 'GALLERY'];
-      const dots = document.getElementById('pc-dots');
-      PLATFORMS.forEach(function (_, i) {
-        const dot = document.createElement('div');
-        dot.className = 'pc-dot' + (i === 0 ? ' active' : '');
-        dots.appendChild(dot);
-      });
-    })();
+    // ── Image → particle cloud ────────────────────────────────────────────
+    // Renders `img` to an offscreen canvas, walks every `step`-th pixel,
+    // and returns an array of { wx, wy, col } in world space.
+    function sampleImage(img) {
+      const maxDim = Math.min(W * 0.70, H * 0.65, 420);
+      const ratio  = Math.min(maxDim / img.width, maxDim / img.height);
+      const dw     = Math.max(1, Math.round(img.width  * ratio));
+      const dh     = Math.max(1, Math.round(img.height * ratio));
 
-    // ── Drag-and-drop body class for overlay ──
-    document.addEventListener('dragenter', function () {
-      document.body.classList.add('dragging');
+      const off    = document.createElement('canvas');
+      off.width    = dw;
+      off.height   = dh;
+      off.getContext('2d').drawImage(img, 0, 0, dw, dh);
+
+      const { data } = off.getContext('2d').getImageData(0, 0, dw, dh);
+      // Adaptive stride so dense images don't create too many particles
+      const step = Math.min(MAX_STEP, Math.max(1, Math.floor(Math.sqrt((dw * dh) / TARGET_PARTICLE_DENSITY))));
+
+      const cx = W / 2, cy = H / 2;
+      const pts = [];
+      for (let py = 0; py < dh; py += step) {
+        for (let px = 0; px < dw; px += step) {
+          const i = (py * dw + px) * 4;
+          if (data[i + 3] > ALPHA_MIN) {
+            pts.push({
+              wx:  cx - dw / 2 + px,
+              wy:  cy - dh / 2 + py,
+              col: 'rgb(' + data[i] + ',' + data[i + 1] + ',' + data[i + 2] + ')',
+            });
+          }
+        }
+      }
+      return pts;
+    }
+
+    // Converts an inline SVG string → HTMLImageElement (via Blob URL).
+    function svgToImage(svgStr) {
+      return new Promise(function (resolve, reject) {
+        const blob = new Blob([svgStr], { type: 'image/svg+xml' });
+        const url  = URL.createObjectURL(blob);
+        const img  = new Image();
+        img.onload  = function () { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = function (e) { URL.revokeObjectURL(url); reject(e); };
+        img.src     = url;
+      });
+    }
+
+    // ── gifler helpers ────────────────────────────────────────────────────
+
+    // Stop the current gifler player and capture the live frame as a cloud.
+    // Returns the cloud array, or null if the canvas is empty / no player.
+    function stopAndSampleGif() {
+      if (!gifPlayer) return null;
+      gifPlayer.stop();
+      gifPlayer = null;
+      if (!gifCanvas.width || !gifCanvas.height) return null;
+      const cloud = sampleImage(gifCanvas);
+      return cloud.length > 0 ? cloud : null;
+    }
+
+    // Load `url` with gifler, animate into gifCanvas, then call `onReady`.
+    // A safety timer ensures `onReady` is always called even if loading fails.
+    function loadAndPlayGIF(url, onReady) {
+      if (gifPlayer) { gifPlayer.stop(); gifPlayer = null; }
+      if (!url) { gifCanvas.classList.remove('visible'); if (onReady) onReady(); return; }
+
+      let done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        if (onReady) onReady();
+      }
+      // Safety: if gifler never calls back (network error etc.), release the lock.
+      const safetyTimer = setTimeout(finish, GIF_LOAD_TIMEOUT_MS);
+
+      gifler(url).get(function (anim) {
+        clearTimeout(safetyTimer);
+        gifPlayer = anim;
+        anim.animateInCanvas(gifCanvas);
+        // Brief delay so the first frame has been rendered before we show it.
+        setTimeout(function () {
+          gifCanvas.classList.add('visible');
+          finish();
+        }, GIF_FIRST_FRAME_MS);
+      });
+    }
+
+    // Call `cb` once morphing is complete (or after SETTLE_TIMEOUT_MS safety timeout).
+    function waitForSettle(cb) {
+      let waited = 0;
+      (function poll() {
+        waited += SETTLE_POLL_MS;
+        if (!morphing || waited > SETTLE_TIMEOUT_MS) { cb(); return; }
+        setTimeout(poll, SETTLE_POLL_MS);
+      })();
+    }
+
+    // Silently move particles to `cloud` positions without burst or morph flag.
+    // Used during window resize when the GIF canvas is visible.
+    function snapToCloud(cloud) {
+      if (!cloud || cloud.length === 0) return;
+      const oldLen = particles.length;
+      const newLen = cloud.length;
+      for (let i = oldLen; i < newLen; i++) {
+        particles.push(makeParticle(
+          cloud[i].wx, cloud[i].wy, cloud[i].col,
+          cloud[i].wx, cloud[i].wy, cloud[i].col
+        ));
+        particles[particles.length - 1].vx = 0;
+        particles[particles.length - 1].vy = 0;
+      }
+      particles.length = newLen;
+      for (let i = 0; i < newLen; i++) {
+        particles[i].x      = cloud[i].wx;
+        particles[i].y      = cloud[i].wy;
+        particles[i].tx     = cloud[i].wx;
+        particles[i].ty     = cloud[i].wy;
+        particles[i].color  = cloud[i].col;
+        particles[i].tcolor = cloud[i].col;
+        particles[i].vx     = 0;
+        particles[i].vy     = 0;
+      }
+    }
+
+    // Place particles exactly at `cloud` positions and at rest, matching the
+    // live GIF frame so the canvas looks identical when gifCanvas is hidden.
+    function setParticlesAtCloud(cloud) {
+      if (!cloud || cloud.length === 0) return;
+      particles = cloud.map(function (pt) {
+        return {
+          x: pt.wx, y: pt.wy, color: pt.col,
+          tx: pt.wx, ty: pt.wy, tcolor: pt.col,
+          size: PART_SIZE, vx: 0, vy: 0, alpha: 1,
+        };
+      });
+    }
+
+    // ── Dot indicators ────────────────────────────────────────────────────
+    function buildDots() {
+      dotsEl.innerHTML = '';
+      slides.forEach(function (_, i) {
+        const d = document.createElement('div');
+        d.className = 'dot' + (i === currentIdx ? ' active' : '');
+        dotsEl.appendChild(d);
+      });
+    }
+    function updateDots(idx) {
+      document.querySelectorAll('.dot').forEach(function (d, i) {
+        d.classList.toggle('active', i === idx);
+      });
+    }
+
+    // ── Colour blend ──────────────────────────────────────────────────────
+    function parseRgb(s) {
+      if (s[0] === '#') {
+        const n = parseInt(s.slice(1), 16);
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+      }
+      const m = s.match(/\d+/g);
+      return m ? m.map(Number) : [200, 200, 200];
+    }
+    function blendColor(a, b, t) {
+      const [ra, ga, ba] = parseRgb(a);
+      const [rb, gb, bb] = parseRgb(b);
+      return (
+        'rgb(' +
+        Math.round(ra * (1 - t) + rb * t) + ',' +
+        Math.round(ga * (1 - t) + gb * t) + ',' +
+        Math.round(ba * (1 - t) + bb * t) + ')'
+      );
+    }
+
+    // ── Particle factory ──────────────────────────────────────────────────
+    function makeParticle(x, y, color, tx, ty, tcol) {
+      return {
+        x, y, color,
+        tx: (tx !== undefined ? tx : x),
+        ty: (ty !== undefined ? ty : y),
+        tcolor: (tcol !== undefined ? tcol : color),
+        size: PART_SIZE,
+        vx: (Math.random() - 0.5) * BURST_V,
+        vy: (Math.random() - 0.5) * BURST_V,
+        alpha: 1,
+      };
+    }
+
+    // ── Morph current particle array toward a new cloud ───────────────────
+    // Clones or trims the particle array to match the new cloud size, then
+    // assigns new target positions + colours and gives every particle a burst.
+    function morphToCloud(cloud) {
+      if (!cloud || cloud.length === 0) return;
+      const oldLen = particles.length;
+      const newLen = cloud.length;
+
+      // Grow: clone existing particles to fill the gap.
+      // If particles is empty (should only happen on first use before initFromCloud),
+      // spawn new particles at the canvas centre.
+      for (let i = oldLen; i < newLen; i++) {
+        if (oldLen === 0) {
+          particles.push(makeParticle(W / 2, H / 2, '#fff', W / 2, H / 2, '#fff'));
+        } else {
+          const src = particles[i % oldLen];
+          particles.push(makeParticle(src.x, src.y, src.color, src.tx, src.ty, src.tcolor));
+        }
+      }
+      // Shrink
+      particles.length = newLen;
+
+      // Assign new targets + burst velocity
+      for (let i = 0; i < particles.length; i++) {
+        const pt = cloud[i];
+        particles[i].tx     = pt.wx;
+        particles[i].ty     = pt.wy;
+        particles[i].tcolor = pt.col;
+        particles[i].vx     = (Math.random() - 0.5) * BURST_V;
+        particles[i].vy     = (Math.random() - 0.5) * BURST_V;
+      }
+      morphing = true;
+    }
+
+    // Seed the particle array from scratch (used for the first slide).
+    function initFromCloud(cloud) {
+      particles = cloud.map(function (pt) {
+        return makeParticle(
+          pt.wx + (Math.random() - 0.5) * W * 0.5,
+          pt.wy + (Math.random() - 0.5) * H * 0.5,
+          pt.col, pt.wx, pt.wy, pt.col
+        );
+      });
+    }
+
+    // ── Animation loop ────────────────────────────────────────────────────
+    // Spring-physics: each particle is pulled toward its target with damping.
+    // When settled, particles get subtle random drift (floating-in-space feel).
+    function startAnim() {
+      if (rafId) cancelAnimationFrame(rafId);
+      function frame() {
+        ctx.clearRect(0, 0, W, H);
+        let settled = 0;
+
+        for (let i = 0; i < particles.length; i++) {
+          const p = particles[i];
+
+          // Spring force
+          const dx = p.tx - p.x;
+          const dy = p.ty - p.y;
+          p.vx += dx * SPRING;
+          p.vy += dy * SPRING;
+
+          // Damping (friction)
+          p.vx *= DAMPING;
+          p.vy *= DAMPING;
+
+          // Subtle drift once the particle is nearly at rest
+          if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
+            p.vx += (Math.random() - 0.5) * DRIFT;
+            p.vy += (Math.random() - 0.5) * DRIFT;
+            settled++;
+          }
+
+          p.x += p.vx;
+          p.y += p.vy;
+
+          // Blend colour toward target
+          p.color = blendColor(p.color, p.tcolor, 0.08);
+
+          // Draw particle
+          ctx.globalAlpha = Math.max(0.15, p.alpha);
+          ctx.fillStyle   = p.color;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.globalAlpha = 1;
+        if (morphing && settled >= particles.length * SETTLE_PCT) morphing = false;
+
+        rafId = requestAnimationFrame(frame);
+      }
+      frame();
+    }
+
+    // ── Navigation ────────────────────────────────────────────────────────
+    function goTo(idx) {
+      if (transitioning || slides.length === 0) return;
+      const targetIdx = ((idx % slides.length) + slides.length) % slides.length;
+
+      transitioning = true;
+
+      // Phase 1 — Stop gifler and sample the live animated frame.
+      // If gifler is running the current frame's pixels match what is
+      // displayed; sampling them makes the particle layer look identical.
+      const liveCloud = stopAndSampleGif();
+      if (liveCloud) {
+        setParticlesAtCloud(liveCloud);
+      }
+
+      // Instantly hide the GIF canvas — the particle canvas beneath it is
+      // now showing particles at the exact same pixel positions, so the
+      // switch is seamless.
+      gifCanvas.classList.remove('visible');
+
+      // Phase 2 — Update slide state and burst particles toward new cloud.
+      currentIdx = targetIdx;
+      labelEl.textContent = slides[currentIdx].label;
+      countEl.textContent = (currentIdx + 1) + ' / ' + slides.length;
+      updateDots(currentIdx);
+      morphToCloud(slides[currentIdx].cloud);
+
+      // Phase 3 — When particles settle, load and play the next GIF.
+      waitForSettle(function () {
+        loadAndPlayGIF(slides[currentIdx].gifSrc, function () {
+          transitioning = false;
+        });
+      });
+    }
+    function next() { goTo(currentIdx + 1); }
+    function prev() { goTo(currentIdx - 1); }
+
+    // ── Load slides from an array of HTMLImageElements ────────────────────
+    function loadFromImages(imgs, labels, srcs) {
+      const valid = [];
+      imgs.forEach(function (img, i) {
+        if (!img) return;
+        const cloud = sampleImage(img);
+        if (cloud.length > 0) valid.push({
+          label:  labels[i] || ('Image ' + (i + 1)),
+          img,
+          cloud,
+          gifSrc: (srcs && srcs[i]) || null,
+        });
+      });
+      if (valid.length === 0) return;
+
+      // Tear down any previous player
+      if (gifPlayer) { gifPlayer.stop(); gifPlayer = null; }
+      gifCanvas.classList.remove('visible');
+
+      // Revoke blob URLs from the previous set of slides to avoid memory leaks.
+      slides.forEach(function (s) {
+        if (s.gifSrc && s.gifSrc.startsWith('blob:')) URL.revokeObjectURL(s.gifSrc);
+      });
+
+      slides        = valid;
+      currentIdx    = 0;
+      transitioning = false;
+      buildDots();
+      initFromCloud(slides[0].cloud);
+      morphing = true;   // particles start scattered; frame loop clears this when settled
+      labelEl.textContent = slides[0].label;
+      countEl.textContent = '1 / ' + slides.length;
+      startAnim();       // always (re)start the animation loop
+
+      // Once the initial cloud settles, start playing the first GIF.
+      waitForSettle(function () {
+        loadAndPlayGIF(slides[0].gifSrc);
+      });
+    }
+
+    // ── File picker + drag-and-drop ───────────────────────────────────────
+    function handleFiles(files) {
+      const arr = Array.from(files).filter(function (f) { return f.type.startsWith('image/'); });
+      if (!arr.length) return;
+      const imgs    = new Array(arr.length);
+      const gifSrcs = new Array(arr.length);
+      const labels  = arr.map(function (f) { return f.name.replace(/\.[^.]+$/, ''); });
+      let loaded    = 0;
+      arr.forEach(function (f, i) {
+        const url = URL.createObjectURL(f);
+        const img = new Image();
+        img.onload = img.onerror = function () {
+          if (img.complete && img.naturalWidth) {
+            imgs[i]    = img;
+            gifSrcs[i] = url;   // keep blob URL alive for gifler; revoked in loadFromImages() when slides are replaced
+          } else {
+            imgs[i]    = null;
+            gifSrcs[i] = null;
+            URL.revokeObjectURL(url);
+          }
+          if (++loaded === arr.length) loadFromImages(imgs, labels, gifSrcs);
+        };
+        img.src = url;
+      });
+    }
+
+    document.getElementById('file-input').addEventListener('change', function (e) {
+      handleFiles(e.target.files);
     });
+
+    // Drag-and-drop
+    document.addEventListener('dragenter', function () { document.body.classList.add('dragging'); });
     document.addEventListener('dragleave', function (e) {
       if (!e.relatedTarget) document.body.classList.remove('dragging');
     });
-    document.addEventListener('drop', function () {
+    document.addEventListener('dragover',  function (e) { e.preventDefault(); });
+    document.addEventListener('drop', function (e) {
+      e.preventDefault();
       document.body.classList.remove('dragging');
+      handleFiles(e.dataTransfer.files);
     });
-  </script>
 
-  <script src="particlecarousel.js"></script>
+    // ── Input: keyboard + swipe + click ──────────────────────────────────
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next();
+      if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')   prev();
+    });
+    document.getElementById('prev').addEventListener('click', prev);
+    document.getElementById('next').addEventListener('click', next);
+
+    // Click canvas to advance (suppress if the pointer moved > 6 px — it was a drag)
+    let pointerDownX = 0, pointerMoved = false;
+    canvas.addEventListener('pointerdown', function (e) {
+      pointerDownX = e.clientX; pointerMoved = false;
+    });
+    canvas.addEventListener('pointermove', function (e) {
+      if (Math.abs(e.clientX - pointerDownX) > 6) pointerMoved = true;
+    });
+    canvas.addEventListener('click', function () { if (!pointerMoved) next(); });
+
+    // Touch swipe
+    let touchStartX = 0;
+    canvas.addEventListener('touchstart', function (e) {
+      touchStartX = e.touches[0].clientX;
+    }, { passive: true });
+    canvas.addEventListener('touchend', function (e) {
+      const d = e.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(d) > 50) { d < 0 ? next() : prev(); }
+    }, { passive: true });
+
+    // ── Bootstrap: load logos from assets/ ───────────────────────────────
+    // Loads each GIF/image by path.  Falls back to svgToImage() if an entry
+    // has a `svg` string instead of a `src` path (backwards compatibility).
+    (async function () {
+      function imgFromSrc(src) {
+        return new Promise(function (resolve) {
+          const img  = new Image();
+          img.onload  = function () { resolve(img); };
+          img.onerror = function () { resolve(null); };
+          img.src     = src;
+        });
+      }
+
+      const imgs   = [];
+      const labels = [];
+      const srcs   = [];
+      for (const logo of DEFAULT_LOGOS) {
+        try {
+          const img = logo.src
+            ? await imgFromSrc(logo.src)
+            : await svgToImage(logo.svg);
+          if (img) {
+            imgs.push(img);
+            labels.push(logo.label);
+            srcs.push(logo.src || null);
+          } else {
+            console.warn('Particle Carousel: failed to load "' + logo.label + '"');
+          }
+        } catch (e) {
+          console.warn('Particle Carousel: failed to load "' + logo.label + '"', e);
+        }
+      }
+      if (imgs.length === 0) {
+        labelEl.textContent = 'Drop an image to start';
+        return;
+      }
+      loadFromImages(imgs, labels, srcs);
+    })();
+
+    // ── Public API ────────────────────────────────────────────────────────
+    window.ParticleCarousel = {
+      next:      next,
+      prev:      prev,
+      goTo:      goTo,
+      /** Load an HTMLImageElement directly as an additional slide.
+       *  @param {HTMLImageElement} img
+       *  @param {string}          [label]
+       *  @param {string}          [gifSrc]  URL/path for gifler idle playback */
+      loadImage: function (img, label, gifSrc) {
+        const cloud = sampleImage(img);
+        if (!cloud.length) return;
+        slides.push({ label: label || 'Custom', img, cloud, gifSrc: gifSrc || null });
+        buildDots();
+        countEl.textContent = (currentIdx + 1) + ' / ' + slides.length;
+      },
+    };
+  </script>
 </body>
 </html>
