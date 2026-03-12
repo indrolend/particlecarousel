@@ -9,9 +9,14 @@
 
   // ─── Physics / sampling constants ─────────────────────────────────────────
   // Spring force pulling each particle toward its target position.
-  const SPRING_FORCE = 0.06;
-  // Velocity damping factor applied each frame (< 1 = friction).
+  const SPRING_FORCE = 0.11;
+  // Velocity damping factor when approaching target (< 1 = friction).
   const DAMPING_FACTOR = 0.82;
+  // Extra friction applied when a particle overshoots its target (velocity and
+  // displacement in opposite directions).  Kills the recoil bounce.
+  const DAMPING_OVERSHOOT = 0.50;
+  // Initial random velocity burst given to particles when they receive new targets.
+  const BURST_VELOCITY = 4;
   // Fraction of particles that must be settled before the morph is considered done.
   // 0.92 leaves a small margin for stragglers that never reach sub-pixel precision.
   const SETTLE_THRESHOLD = 0.92;
@@ -19,6 +24,10 @@
   const ALPHA_THRESHOLD = 60;
   // Maximum stride when sub-sampling image pixels to avoid O(n²) work on large images.
   const MAX_SAMPLE_STEP = 8;
+  // Random lateral nudge per frame during gather phase.
+  // Breaks visible straight lines when many particles share the same row/column
+  // in a rectangular source image.
+  const GATHER_JITTER = 0.8; // max random acceleration (px/frame²) while morphing
 
   // ─── Platform definitions ──────────────────────────────────────────────────
   const PLATFORMS = [
@@ -386,8 +395,8 @@
       particles[i].ty = pt.wy;
       particles[i].tcolor = pt.col;
       // Give a small burst
-      particles[i].vx = (Math.random() - 0.5) * 10;
-      particles[i].vy = (Math.random() - 0.5) * 10;
+      particles[i].vx = (Math.random() - 0.5) * BURST_VELOCITY;
+      particles[i].vy = (Math.random() - 0.5) * BURST_VELOCITY;
     }
   }
 
@@ -430,9 +439,19 @@
         p.vx += dx * SPRING_FORCE;
         p.vy += dy * SPRING_FORCE;
 
-        // Damping
-        p.vx *= DAMPING_FACTOR;
-        p.vy *= DAMPING_FACTOR;
+        // During gathering: small distance-scaled jitter breaks visible straight
+        // lines that form when particles share row/column in a rectangular image.
+        if (morphing && (Math.abs(dx) > 2 || Math.abs(dy) > 2)) {
+          // Scale jitter with distance: full strength at ≥20 px away, zero at target.
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          const j = Math.min(dist / 20, 1) * GATHER_JITTER;
+          p.vx += (Math.random() - 0.5) * j;
+          p.vy += (Math.random() - 0.5) * j;
+        }
+
+        // Asymmetric damping — brake hard when overshooting to kill recoil bounce
+        p.vx *= (dx * p.vx < 0) ? DAMPING_OVERSHOOT : DAMPING_FACTOR;
+        p.vy *= (dy * p.vy < 0) ? DAMPING_OVERSHOOT : DAMPING_FACTOR;
 
         // Add subtle drift when settled (floating-in-space feel)
         if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
