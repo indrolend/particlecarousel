@@ -329,8 +329,9 @@
         anim.animateInCanvas(gifCanvas);
         // Brief delay so the first frame has been rendered before we show it.
         setTimeout(function () {
-          gifCanvas.style.display = '';  // clear any inline hide set during transition
+          gifCanvas.style.display = '';  // clear the display:none set in goTo() during transition
           gifCanvas.classList.add('visible');
+          canvas.style.visibility = 'hidden'; // hide particles while GIF is playing
           finish();
         }, GIF_FIRST_FRAME_MS);
       });
@@ -538,6 +539,9 @@
 
       transitioning = true;
 
+      // Reveal the particle canvas for the transition (it is hidden while the GIF plays).
+      canvas.style.visibility = '';
+
       // Phase 1 — Stop gifler and sample the live animated frame.
       // If gifler is running the current frame's pixels match what is
       // displayed; sampling them makes the particle layer look identical.
@@ -587,6 +591,7 @@
       // Tear down any previous player
       if (gifPlayer) { gifPlayer.stop(); gifPlayer = null; }
       gifCanvas.classList.remove('visible');
+      canvas.style.visibility = ''; // ensure particle canvas is visible for the initial morph
 
       // Revoke blob URLs from the previous set of slides to avoid memory leaks.
       slides.forEach(function (s) {
