@@ -1,16 +1,22 @@
 <!DOCTYPE html>
 <!--
-  Particle Carousel — single self-contained file, no dependencies.
+  Particle Carousel — single self-contained file.
   ─────────────────────────────────────────────────────────────────
   Three-phase animation per slide:
-    1. IDLE    — The GIF plays as a live animated image overlay.
-    2. TRIGGER — User navigates: GIF fades out, the particle cloud
-                 (always maintained beneath it) bursts and morphs
-                 toward the next slide's cloud via spring-physics.
-    3. SETTLE  — Particles reach their new targets; the next GIF
-                 fades in and the loop begins again.
+    1. IDLE    — gifler renders the animated GIF into a canvas
+                 displayed on screen.  The particle canvas
+                 runs beneath it (invisible, but ready).
+    2. TRIGGER — User navigates: gifler stops (freezing the current
+                 frame), the live frame is sampled as a particle cloud,
+                 and those particles are placed at the exact pixel
+                 positions.  The GIF canvas is instantly hidden,
+                 revealing the particle layer.  Particles burst and
+                 spring-morph toward the next slide's cloud.
+    3. SETTLE  — Particles reach their targets; gifler loads and plays
+                 the next GIF, which appears on top ("solidifying").
 
-  Inspired by Codrops/ParticleEffectsButtons.
+  Requires: gifler (vendored in assets/gifler.min.js from gifler@0.1.0,
+            Apache-2.0; CDN alternative: jsdelivr.net/npm/gifler@0.1.0).
   Deploy as-is to Cloudflare Pages (or any static host).
 
   ── Extending ──────────────────────────────────────────────────
@@ -24,6 +30,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Particle Carousel</title>
+  <!-- gifler: decodes animated GIFs frame-by-frame into a <canvas>.
+       CDN: https://cdn.jsdelivr.net/npm/gifler@0.1.0/gifler.min.js -->
+  <script src="assets/gifler.min.js"></script>
   <style>
     /* ── Reset & base ─────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -105,20 +114,23 @@
     }
     body.dragging #drop-overlay { opacity: 1; }
 
-    /* ── Animated GIF overlay (idle state) ───────────────────────────────── */
-    /* Positioned to match the particle cloud (same centre, same max size).   */
-    #gif-overlay {
+    /* ── Animated GIF canvas (idle state) ───────────────────────────────── */
+    /* gifler renders the GIF into this canvas; it is shown over the particle */
+    /* canvas during idle and instantly hidden when a transition fires.        */
+    #gif-canvas {
       position: fixed; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
+      /* CSS scales the canvas element proportionally for display.             */
+      /* gifler sets the intrinsic width/height to the GIF's native dimensions.*/
       max-width:  min(70vw, 420px);
       max-height: min(65vh, 420px);
-      object-fit: contain;
+      width: auto;
+      height: auto;
       pointer-events: none;
-      z-index: 2;           /* above canvas, below controls/label */
-      opacity: 0;
-      transition: opacity 400ms ease;   /* keep in sync with GIF_FADE_MS */
+      z-index: 2;           /* above particle canvas, below controls/label */
+      display: none;
     }
-    #gif-overlay.visible { opacity: 1; }
+    #gif-canvas.visible { display: block; }
   </style>
 </head>
 <body>
@@ -126,8 +138,8 @@
   <!-- Full-screen canvas — particles are drawn here -->
   <canvas id="canvas"></canvas>
 
-  <!-- Animated GIF overlay — visible during idle; hidden during transitions -->
-  <img id="gif-overlay" alt="" aria-hidden="true" />
+  <!-- GIF canvas — gifler renders the animated GIF into this; shown in idle, hidden during transitions -->
+  <canvas id="gif-canvas" aria-hidden="true"></canvas>
 
   <!-- Controls: file picker + prev / next buttons -->
   <div id="controls">
@@ -170,10 +182,14 @@
     const TARGET_PARTICLE_DENSITY = 700;
 
     // ── GIF transition timing ─────────────────────────────────────────────
-    // GIF_FADE_MS must match the CSS `transition: opacity` duration on #gif-overlay.
-    const GIF_FADE_MS       = 400;   // ms — CSS opacity fade in/out
     const SETTLE_POLL_MS    = 80;    // ms — how often to poll for morph completion
     const SETTLE_TIMEOUT_MS = 5000;  // ms — safety limit: show GIF even if morph stalls
+    // ms to wait after gifler's animateInCanvas() before revealing the canvas.
+    // gifler schedules its first draw via requestAnimationFrame; this delay
+    // ensures at least one frame has been painted before the canvas is shown.
+    const GIF_FIRST_FRAME_MS  = 60;
+    // ms before giving up waiting for a GIF to load over the network.
+    const GIF_LOAD_TIMEOUT_MS = 10000;
 
     // ── Default slides ────────────────────────────────────────────────────
     // Drop new GIF/PNG/SVG files into assets/ and add a matching entry here.
@@ -193,7 +209,7 @@
     const labelEl     = document.getElementById('label');
     const dotsEl      = document.getElementById('dots');
     const countEl     = document.getElementById('img-count');
-    const gifOverlay  = document.getElementById('gif-overlay');
+    const gifCanvas   = document.getElementById('gif-canvas');
 
     let W, H;
     // slides[i] = { label, img, cloud, gifSrc }
@@ -202,6 +218,7 @@
     let currentIdx    = 0;
     let morphing      = false; // true while particles are springing to targets
     let transitioning = false; // true from goTo start until next GIF appears
+    let gifPlayer     = null;  // current gifler Animator instance
     let rafId         = null;
 
     // ── Canvas resize ─────────────────────────────────────────────────────
@@ -214,7 +231,7 @@
           if (s.img) s.cloud = sampleImage(s.img);
         });
         if (!transitioning) {
-          if (gifOverlay.classList.contains('visible')) {
+          if (gifCanvas.classList.contains('visible')) {
             // GIF is showing — silently snap particles to new positions so
             // they are correct when the next transition fires.
             snapToCloud(slides[currentIdx].cloud);
@@ -274,23 +291,44 @@
       });
     }
 
-    // ── GIF overlay helpers ───────────────────────────────────────────────
+    // ── gifler helpers ────────────────────────────────────────────────────
 
-    // Show the GIF for `src` and restart it from frame 1.
-    function showGif(src) {
-      if (!src) return;
-      // Setting src resets the animation when the URL differs from the current.
-      // Clearing first guarantees a restart even for the same URL.
-      gifOverlay.src = '';
-      gifOverlay.src = src;
-      gifOverlay.classList.add('visible');
+    // Stop the current gifler player and capture the live frame as a cloud.
+    // Returns the cloud array, or null if the canvas is empty / no player.
+    function stopAndSampleGif() {
+      if (!gifPlayer) return null;
+      gifPlayer.stop();
+      gifPlayer = null;
+      if (!gifCanvas.width || !gifCanvas.height) return null;
+      const cloud = sampleImage(gifCanvas);
+      return cloud.length > 0 ? cloud : null;
     }
 
-    // Fade out the GIF and invoke `cb` once the CSS transition ends.
-    function hideGif(cb) {
-      if (!gifOverlay.classList.contains('visible')) { cb(); return; }
-      gifOverlay.classList.remove('visible');
-      setTimeout(cb, GIF_FADE_MS);
+    // Load `url` with gifler, animate into gifCanvas, then call `onReady`.
+    // A safety timer ensures `onReady` is always called even if loading fails.
+    function loadAndPlayGIF(url, onReady) {
+      if (gifPlayer) { gifPlayer.stop(); gifPlayer = null; }
+      if (!url) { gifCanvas.classList.remove('visible'); if (onReady) onReady(); return; }
+
+      let done = false;
+      function finish() {
+        if (done) return;
+        done = true;
+        if (onReady) onReady();
+      }
+      // Safety: if gifler never calls back (network error etc.), release the lock.
+      const safetyTimer = setTimeout(finish, GIF_LOAD_TIMEOUT_MS);
+
+      gifler(url).get(function (anim) {
+        clearTimeout(safetyTimer);
+        gifPlayer = anim;
+        anim.animateInCanvas(gifCanvas);
+        // Brief delay so the first frame has been rendered before we show it.
+        setTimeout(function () {
+          gifCanvas.classList.add('visible');
+          finish();
+        }, GIF_FIRST_FRAME_MS);
+      });
     }
 
     // Call `cb` once morphing is complete (or after SETTLE_TIMEOUT_MS safety timeout).
@@ -304,7 +342,7 @@
     }
 
     // Silently move particles to `cloud` positions without burst or morph flag.
-    // Used during window resize when the GIF overlay is visible.
+    // Used during window resize when the GIF canvas is visible.
     function snapToCloud(cloud) {
       if (!cloud || cloud.length === 0) return;
       const oldLen = particles.length;
@@ -328,6 +366,19 @@
         particles[i].vx     = 0;
         particles[i].vy     = 0;
       }
+    }
+
+    // Place particles exactly at `cloud` positions and at rest, matching the
+    // live GIF frame so the canvas looks identical when gifCanvas is hidden.
+    function setParticlesAtCloud(cloud) {
+      if (!cloud || cloud.length === 0) return;
+      particles = cloud.map(function (pt) {
+        return {
+          x: pt.wx, y: pt.wy, color: pt.col,
+          tx: pt.wx, ty: pt.wy, tcolor: pt.col,
+          size: PART_SIZE, vx: 0, vy: 0, alpha: 1,
+        };
+      });
     }
 
     // ── Dot indicators ────────────────────────────────────────────────────
@@ -482,18 +533,29 @@
 
       transitioning = true;
 
-      // Phase 1: fade out current GIF to reveal particle cloud beneath it.
-      hideGif(function () {
-        // Phase 2: update slide state and morph particles to new cloud.
-        currentIdx = targetIdx;
-        labelEl.textContent = slides[currentIdx].label;
-        countEl.textContent = (currentIdx + 1) + ' / ' + slides.length;
-        updateDots(currentIdx);
-        morphToCloud(slides[currentIdx].cloud);
+      // Phase 1 — Stop gifler and sample the live animated frame.
+      // If gifler is running the current frame's pixels match what is
+      // displayed; sampling them makes the particle layer look identical.
+      const liveCloud = stopAndSampleGif();
+      if (liveCloud) {
+        setParticlesAtCloud(liveCloud);
+      }
 
-        // Phase 3: wait for particles to settle, then show the next GIF.
-        waitForSettle(function () {
-          showGif(slides[currentIdx].gifSrc);
+      // Instantly hide the GIF canvas — the particle canvas beneath it is
+      // now showing particles at the exact same pixel positions, so the
+      // switch is seamless.
+      gifCanvas.classList.remove('visible');
+
+      // Phase 2 — Update slide state and burst particles toward new cloud.
+      currentIdx = targetIdx;
+      labelEl.textContent = slides[currentIdx].label;
+      countEl.textContent = (currentIdx + 1) + ' / ' + slides.length;
+      updateDots(currentIdx);
+      morphToCloud(slides[currentIdx].cloud);
+
+      // Phase 3 — When particles settle, load and play the next GIF.
+      waitForSettle(function () {
+        loadAndPlayGIF(slides[currentIdx].gifSrc, function () {
           transitioning = false;
         });
       });
@@ -516,10 +578,18 @@
       });
       if (valid.length === 0) return;
 
+      // Tear down any previous player
+      if (gifPlayer) { gifPlayer.stop(); gifPlayer = null; }
+      gifCanvas.classList.remove('visible');
+
+      // Revoke blob URLs from the previous set of slides to avoid memory leaks.
+      slides.forEach(function (s) {
+        if (s.gifSrc && s.gifSrc.startsWith('blob:')) URL.revokeObjectURL(s.gifSrc);
+      });
+
       slides        = valid;
       currentIdx    = 0;
       transitioning = false;
-      gifOverlay.classList.remove('visible');
       buildDots();
       initFromCloud(slides[0].cloud);
       morphing = true;   // particles start scattered; frame loop clears this when settled
@@ -527,9 +597,9 @@
       countEl.textContent = '1 / ' + slides.length;
       startAnim();       // always (re)start the animation loop
 
-      // Show the first GIF once the initial particle cloud has settled.
+      // Once the initial cloud settles, start playing the first GIF.
       waitForSettle(function () {
-        showGif(slides[0].gifSrc);
+        loadAndPlayGIF(slides[0].gifSrc);
       });
     }
 
@@ -547,7 +617,7 @@
         img.onload = img.onerror = function () {
           if (img.complete && img.naturalWidth) {
             imgs[i]    = img;
-            gifSrcs[i] = url;   // keep blob URL alive — used by gif-overlay
+            gifSrcs[i] = url;   // keep blob URL alive for gifler; revoked in loadFromImages() when slides are replaced
           } else {
             imgs[i]    = null;
             gifSrcs[i] = null;
@@ -647,10 +717,10 @@
       next:      next,
       prev:      prev,
       goTo:      goTo,
-      /** Load an HTMLImageElement directly as the next slide.
+      /** Load an HTMLImageElement directly as an additional slide.
        *  @param {HTMLImageElement} img
        *  @param {string}          [label]
-       *  @param {string}          [gifSrc]  URL/path shown in idle state */
+       *  @param {string}          [gifSrc]  URL/path for gifler idle playback */
       loadImage: function (img, label, gifSrc) {
         const cloud = sampleImage(img);
         if (!cloud.length) return;
