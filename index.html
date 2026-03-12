@@ -2,18 +2,21 @@
 <!--
   Particle Carousel — single self-contained file.
   ─────────────────────────────────────────────────────────────────
-  Three-phase animation per slide:
-    1. IDLE    — gifler renders the animated GIF into a canvas
-                 displayed on screen.  The particle canvas
-                 runs beneath it (invisible, but ready).
-    2. TRIGGER — User navigates: gifler stops (freezing the current
-                 frame), the live frame is sampled as a particle cloud,
-                 and those particles are placed at the exact pixel
-                 positions.  The GIF canvas is instantly hidden,
-                 revealing the particle layer.  Particles burst and
-                 spring-morph toward the next slide's cloud.
-    3. SETTLE  — Particles reach their targets; gifler loads and plays
-                 the next GIF, which appears on top ("solidifying").
+  Four-phase animation per transition:
+    1. IDLE      — gifler renders the animated GIF into a canvas
+                   displayed on screen.  The particle canvas
+                   runs beneath it (invisible, but ready).
+    2. TRIGGER   — User navigates: gifler stops (freezing the current
+                   frame), the live frame is sampled as a particle cloud,
+                   and those particles are placed at the exact pixel
+                   positions.  The GIF canvas is instantly hidden,
+                   revealing the particle layer.
+    3. EXPLOSION — Each particle is given a random outward velocity and
+                   flies freely for EXPLODE_DURATION ms, fading slightly,
+                   giving a "burst apart" visual.
+    4. REASSEMBLE — Particles spring-morph from their scattered positions
+                   toward the next slide's cloud.  Once settled, gifler
+                   loads and plays the next GIF ("solidifying").
 
   Requires: gifler (vendored in assets/gifler.min.js from gifler@0.1.0,
             Apache-2.0; CDN alternative: jsdelivr.net/npm/gifler@0.1.0).
@@ -23,6 +26,7 @@
   • Add slides: drop a GIF/PNG/SVG into assets/ and add an entry to
     DEFAULT_LOGOS with { label, src } pointing to the file.
   • Tune physics: edit SPRING, DAMPING, DRIFT at the top of the script.
+  • Tune explosion: edit EXPLODE_DURATION, EXPLODE_SPEED_MIN/MAX etc.
   • Full JS API: ParticleCarousel.next() / .prev() / .goTo(n) / .loadImage(img)
 -->
 <html lang="en">
@@ -191,6 +195,13 @@
     // ms before giving up waiting for a GIF to load over the network.
     const GIF_LOAD_TIMEOUT_MS = 10000;
 
+    // ── Explosion transition ──────────────────────────────────────────────
+    const EXPLODE_DURATION  = 700;   // ms — how long particles fly outward
+    const EXPLODE_SPEED_MIN = 6;     // px/frame — minimum outward speed per particle
+    const EXPLODE_SPEED_MAX = 15;    // px/frame — maximum outward speed per particle
+    const EXPLODE_DAMPING   = 0.97;  // very light friction so particles keep flying
+    const EXPLODE_ALPHA     = 0.55;  // alpha target to fade toward during explosion
+
     // ── Default slides ────────────────────────────────────────────────────
     // Drop new GIF/PNG/SVG files into assets/ and add a matching entry here.
     // Each entry: { label: string, src: 'assets/<filename>' }
@@ -217,6 +228,7 @@
     let particles     = [];   // active particle array
     let currentIdx    = 0;
     let morphing      = false; // true while particles are springing to targets
+    let exploding     = false; // true during the outward explosion phase
     let transitioning = false; // true from goTo start until next GIF appears
     let gifPlayer     = null;  // current gifler Animator instance
     let rafId         = null;
@@ -481,52 +493,101 @@
       });
     }
 
+    // ── Explosion transition ──────────────────────────────────────────────
+    // Kicks every particle in a random direction at a random speed, lets them
+    // fly freely for `duration` ms, then calls `onComplete` so the caller can
+    // assign new targets and start the spring-morph toward the next slide.
+    function explodeParticles(duration, onComplete) {
+      for (let i = 0; i < particles.length; i++) {
+        const p     = particles[i];
+        const angle = Math.random() * Math.PI * 2;
+        const speed = EXPLODE_SPEED_MIN + Math.random() * (EXPLODE_SPEED_MAX - EXPLODE_SPEED_MIN);
+        p.vx    = Math.cos(angle) * speed;
+        p.vy    = Math.sin(angle) * speed;
+        p.alpha = 1;
+      }
+      exploding = true;
+      morphing  = false;
+
+      setTimeout(function () {
+        exploding = false;
+        // Restore full opacity so the reassembly morph starts at full brightness.
+        for (let i = 0; i < particles.length; i++) {
+          particles[i].alpha = 1;
+        }
+        onComplete();
+      }, duration);
+    }
+
     // ── Animation loop ────────────────────────────────────────────────────
-    // Spring-physics: each particle is pulled toward its target with damping.
-    // When settled, particles get subtle random drift (floating-in-space feel).
+    // Two physics modes, selected by state flags:
+    //   exploding — particles fly freely with very light friction (no spring pull).
+    //   default   — spring-physics pulls each particle toward its target;
+    //               settled particles get subtle random drift.
     function startAnim() {
       if (rafId) cancelAnimationFrame(rafId);
       function frame() {
         ctx.clearRect(0, 0, W, H);
         let settled = 0;
 
-        for (let i = 0; i < particles.length; i++) {
-          const p = particles[i];
+        if (exploding) {
+          // ── Explosion phase: free-fly with very light friction ────────────
+          for (let i = 0; i < particles.length; i++) {
+            const p = particles[i];
 
-          // Spring force
-          const dx = p.tx - p.x;
-          const dy = p.ty - p.y;
-          p.vx += dx * SPRING;
-          p.vy += dy * SPRING;
+            p.vx *= EXPLODE_DAMPING;
+            p.vy *= EXPLODE_DAMPING;
+            p.x  += p.vx;
+            p.y  += p.vy;
 
-          // Damping (friction)
-          p.vx *= DAMPING;
-          p.vy *= DAMPING;
+            // Gently fade toward EXPLODE_ALPHA for a subtle dissolving effect.
+            p.alpha += (EXPLODE_ALPHA - p.alpha) * 0.06;
 
-          // Subtle drift once the particle is nearly at rest
-          if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
-            p.vx += (Math.random() - 0.5) * DRIFT;
-            p.vy += (Math.random() - 0.5) * DRIFT;
-            settled++;
+            ctx.globalAlpha = Math.max(0.1, p.alpha);
+            ctx.fillStyle   = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else {
+          // ── Spring-physics morph / idle drift ─────────────────────────────
+          for (let i = 0; i < particles.length; i++) {
+            const p = particles[i];
+
+            // Spring force toward target
+            const dx = p.tx - p.x;
+            const dy = p.ty - p.y;
+            p.vx += dx * SPRING;
+            p.vy += dy * SPRING;
+
+            // Damping (friction)
+            p.vx *= DAMPING;
+            p.vy *= DAMPING;
+
+            // Subtle drift once the particle is nearly at rest
+            if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
+              p.vx += (Math.random() - 0.5) * DRIFT;
+              p.vy += (Math.random() - 0.5) * DRIFT;
+              settled++;
+            }
+
+            p.x += p.vx;
+            p.y += p.vy;
+
+            // Blend colour toward target
+            p.color = blendColor(p.color, p.tcolor, 0.08);
+
+            ctx.globalAlpha = Math.max(0.15, p.alpha);
+            ctx.fillStyle   = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.fill();
           }
 
-          p.x += p.vx;
-          p.y += p.vy;
-
-          // Blend colour toward target
-          p.color = blendColor(p.color, p.tcolor, 0.08);
-
-          // Draw particle
-          ctx.globalAlpha = Math.max(0.15, p.alpha);
-          ctx.fillStyle   = p.color;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-          ctx.fill();
+          if (morphing && settled >= particles.length * SETTLE_PCT) morphing = false;
         }
 
         ctx.globalAlpha = 1;
-        if (morphing && settled >= particles.length * SETTLE_PCT) morphing = false;
-
         rafId = requestAnimationFrame(frame);
       }
       frame();
@@ -556,17 +617,21 @@
       gifCanvas.classList.remove('visible');
       gifCanvas.style.display = 'none';
 
-      // Phase 2 — Update slide state and burst particles toward new cloud.
-      currentIdx = targetIdx;
-      labelEl.textContent = slides[currentIdx].label;
-      countEl.textContent = (currentIdx + 1) + ' / ' + slides.length;
-      updateDots(currentIdx);
-      morphToCloud(slides[currentIdx].cloud);
+      // Phase 2 — Explosion: particles burst outward before reassembling.
+      explodeParticles(EXPLODE_DURATION, function () {
 
-      // Phase 3 — When particles settle, load and play the next GIF.
-      waitForSettle(function () {
-        loadAndPlayGIF(slides[currentIdx].gifSrc, function () {
-          transitioning = false;
+        // Phase 3 — Update slide state and spring-morph toward the new cloud.
+        currentIdx = targetIdx;
+        labelEl.textContent = slides[currentIdx].label;
+        countEl.textContent = (currentIdx + 1) + ' / ' + slides.length;
+        updateDots(currentIdx);
+        morphToCloud(slides[currentIdx].cloud);
+
+        // Phase 4 — When particles settle, load and play the next GIF.
+        waitForSettle(function () {
+          loadAndPlayGIF(slides[currentIdx].gifSrc, function () {
+            transitioning = false;
+          });
         });
       });
     }
