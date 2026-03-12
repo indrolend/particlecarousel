@@ -1,6 +1,6 @@
 # Particle Carousel
 
-A **single-file, dependency-free** demo of a particle-based logo carousel with canvas morphing transitions. Each logo is a real GIF from the `assets/` folder rendered into a cloud of coloured particles. Designed to deploy instantly on **Cloudflare Pages** (or any static host).
+A particle-based logo carousel with canvas morphing transitions. Each logo is a real GIF from the `assets/` folder rendered into a cloud of coloured particles. Designed to deploy instantly on **Cloudflare Pages** (or any static host).
 
 Inspired by [Codrops/ParticleEffectsButtons](https://tympanus.net/Development/ParticleEffectsButtons/).
 
@@ -8,21 +8,21 @@ Inspired by [Codrops/ParticleEffectsButtons](https://tympanus.net/Development/Pa
 
 - **Real GIF sampling** — logo GIFs from `assets/` are rendered to a canvas; every non-transparent pixel becomes a coloured particle that retains the original pixel colour.
 - **Spring-physics morphing** — particles spring toward their new targets with damping and subtle random drift for a floating-in-space feel.
-- **Logo carousel** — Spotify → Apple Music → TikTok → YouTube → Instagram → Bandcamp (extend the `DEFAULT_LOGOS` array with any GIF, PNG, or SVG in `assets/`).
+- **Logo carousel** — Spotify → Apple Music → TikTok → YouTube → Instagram → Bandcamp (extend the `DEFAULT_LOGOS` array in `particlecarousel.demo.js` with any GIF, PNG, or SVG in `assets/`).
 - **Click · Swipe · Arrow-key** navigation between slides.
 - **Drag-and-drop / file picker** — drop or load any image to instantly sample it into particles.
-- **One file** — all HTML, CSS, and JS live in `index.html`; easy to read and extend.
-- **No dependencies** — pure vanilla JavaScript + Canvas 2D API.
+- **Modular** — engine in `particlecarousel.engine.js`, demo wiring in `particlecarousel.demo.js`; easy to embed in an SPA.
+- **No bundler** — pure vanilla JavaScript + Canvas 2D API; works from `file://` without a server.
 - **Responsive** — adapts to any screen size.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `index.html` | **Everything** — self-contained demo (HTML + CSS + JS inline) |
-| `style.css` | Standalone CSS for the modular build (used alongside `particlecarousel.js`) |
-| `particlecarousel.js` | Standalone JS module — alternative to the single-file approach |
-| `assets/` | GIF logo files: Spotifylogospin, Applemusiclogospin, Tiktoklogospin, Youtubelogospin, Instagramlogospin, Bandcamplogospin |
+| `index.html` | Demo page — HTML markup + CSS |
+| `particlecarousel.engine.js` | **Canonical engine** — `ParticleCarouselEngine` class (particle physics, GIF playback, navigation) |
+| `particlecarousel.demo.js` | Demo harness — default logos, UI wiring (buttons, keyboard, swipe, drag-and-drop, file picker) |
+| `assets/` | GIF logo files + vendored `gifler.min.js` |
 
 > **Quick start:** just open `index.html` in a browser — no server needed.
 
@@ -47,7 +47,7 @@ Your carousel will be live at `https://<project>.pages.dev`.
 
 ## Adding Your Own Logos
 
-Drop a GIF/PNG/SVG into the `assets/` folder and add a matching entry to `DEFAULT_LOGOS` in the `<script>` block of `index.html`:
+Drop a GIF/PNG/SVG into the `assets/` folder and add a matching entry to `DEFAULT_LOGOS` in `particlecarousel.demo.js`:
 
 ```js
 const DEFAULT_LOGOS = [
@@ -66,7 +66,7 @@ Drag and drop **any PNG, JPEG, GIF, or SVG** onto the canvas, or click **📁 Lo
 
 ## Tuning Physics
 
-At the top of the `<script>` block:
+At the top of `particlecarousel.engine.js`:
 
 ```js
 const SPRING     = 0.055;  // pull strength toward target (higher = snappier)
@@ -86,6 +86,28 @@ ParticleCarousel.goTo(2);         // jump to zero-based index
 const img = new Image();
 img.src = 'mylogo.png';
 img.onload = () => ParticleCarousel.loadImage(img, 'My Logo');
+```
+
+For SPA usage, instantiate the engine directly:
+
+```js
+const engine = new ParticleCarouselEngine({
+  particleCanvas: document.getElementById('canvas'),
+  gifCanvas:      document.getElementById('gif-canvas'),
+  labelEl:        document.getElementById('label'),   // optional
+  dotsEl:         document.getElementById('dots'),    // optional
+  countEl:        document.getElementById('img-count'), // optional
+});
+
+// slides must be pre-loaded HTMLImageElements
+engine.setSlides([
+  { label: 'Spotify', img: spotifyImgEl, gifSrc: 'assets/Spotifylogospin.gif' },
+]);
+
+engine.next();       // advance
+engine.prev();       // go back
+engine.goTo(2);      // jump to index
+engine.destroy();    // clean up RAF + gifler + resize listener (SPA unmount)
 ```
 
 ## License
