@@ -234,9 +234,18 @@
     let rafId         = null;
 
     // ── Canvas resize ─────────────────────────────────────────────────────
+    // Use the canvas element's actual CSS-rendered size (via getBoundingClientRect)
+    // rather than window.innerWidth/Height.  On iOS Safari, window.innerHeight
+    // reflects the *visual* viewport (which shrinks when the address bar is
+    // visible) while CSS 100vh reflects the *large* viewport.  Using the
+    // element's rendered rect ensures the canvas bitmap is always 1-to-1 with
+    // its CSS display size so particle coordinates map exactly to CSS positions,
+    // fixing the vertical misalignment seen on iPhone Safari.
     function resize() {
-      W = canvas.width  = window.innerWidth;
-      H = canvas.height = window.innerHeight;
+      const rect = canvas.getBoundingClientRect();
+      // rect.width/height are 0 before first layout, so fall back to window dimensions.
+      W = canvas.width  = Math.round(rect.width  || window.innerWidth);
+      H = canvas.height = Math.round(rect.height || window.innerHeight);
       // Regenerate clouds for new centre position
       if (slides.length > 0) {
         slides.forEach(function (s) {
