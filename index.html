@@ -127,7 +127,7 @@
       /* CSS scales the canvas element proportionally for display.             */
       /* gifler sets the intrinsic width/height to the GIF's native dimensions.*/
       max-width:  min(70vw, 420px);
-      max-height: min(65vh, 420px);
+      max-height: min(calc(var(--vh, 1vh) * 65), 420px);
       width: auto;
       height: auto;
       pointer-events: none;
@@ -234,18 +234,26 @@
     let rafId         = null;
 
     // ── Canvas resize ─────────────────────────────────────────────────────
-    // Use the canvas element's actual CSS-rendered size (via getBoundingClientRect)
-    // rather than window.innerWidth/Height.  On iOS Safari, window.innerHeight
-    // reflects the *visual* viewport (which shrinks when the address bar is
-    // visible) while CSS 100vh reflects the *large* viewport.  Using the
-    // element's rendered rect ensures the canvas bitmap is always 1-to-1 with
-    // its CSS display size so particle coordinates map exactly to CSS positions,
-    // fixing the vertical misalignment seen on iPhone Safari.
+    // On iOS Safari, CSS `100vh` resolves to the *large* viewport height (e.g.
+    // ~844 px) while JS `window.innerHeight` and `position:fixed top:50%`
+    // both resolve to the *visual* viewport height (e.g. ~664 px).  Using the
+    // visual viewport dimensions for both the canvas bitmap AND the canvas CSS
+    // size ensures:
+    //   1. No bitmap scaling (canvas.style overrides the CSS `100vw/100vh` rule).
+    //   2. The particle centre at (W/2, H/2) in canvas coords matches the GIF
+    //      canvas centre at `top:50%; left:50%` (both relative to visual viewport).
+    // Desktop is unaffected — on desktop, window.innerHeight === 100vh.
     function resize() {
-      const rect = canvas.getBoundingClientRect();
-      // rect.width/height are 0 before first layout, so fall back to window dimensions.
-      W = canvas.width  = Math.round(rect.width  || window.innerWidth);
-      H = canvas.height = Math.round(rect.height || window.innerHeight);
+      W = canvas.width  = window.innerWidth;
+      H = canvas.height = window.innerHeight;
+      // Override the CSS 100vw/100vh rules so the canvas element is displayed at
+      // exactly W×H CSS pixels — no implicit scaling on any platform.
+      canvas.style.width  = W + 'px';
+      canvas.style.height = H + 'px';
+      // Expose visual-viewport height as a CSS variable so #gif-canvas can use
+      // max-height: calc(var(--vh) * 65) instead of 65vh, keeping both layers
+      // sized from the same reference.
+      document.documentElement.style.setProperty('--vh', (H * 0.01) + 'px');
       // Regenerate clouds for new centre position
       if (slides.length > 0) {
         slides.forEach(function (s) {
