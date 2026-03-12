@@ -173,7 +173,7 @@
 
     // ── Physics constants ─────────────────────────────────────────────────
     // Tweak these to change the feel of the transitions.
-    const SPRING               = 0.055;  // Spring coefficient: pulls particles toward target
+    const SPRING               = 0.08;   // Spring coefficient: pulls particles toward target
     const DAMPING              = 0.82;   // Velocity multiplier per frame when approaching target
     const DAMPING_OVERSHOOT    = 0.65;   // Extra friction when velocity overshoots target (kills bounce)
     const DRIFT                = 0.30;   // Subtle random drift when floating in place
@@ -197,7 +197,7 @@
     const GIF_LOAD_TIMEOUT_MS = 10000;
 
     // ── Explosion transition ──────────────────────────────────────────────
-    const EXPLODE_DURATION  = 700;   // ms — how long particles fly outward
+    const EXPLODE_DURATION  = 450;   // ms — how long particles fly outward
     const EXPLODE_SPEED_MIN = 3;     // px/frame — minimum outward speed per particle
     const EXPLODE_SPEED_MAX = 8;     // px/frame — maximum outward speed per particle
     const EXPLODE_DAMPING   = 0.94;  // friction per frame — higher value = particles travel farther

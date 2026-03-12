@@ -9,7 +9,7 @@
 
   // ─── Physics / sampling constants ─────────────────────────────────────────
   // Spring force pulling each particle toward its target position.
-  const SPRING_FORCE = 0.06;
+  const SPRING_FORCE = 0.08;
   // Velocity damping factor when approaching target (< 1 = friction).
   const DAMPING_FACTOR = 0.82;
   // Extra friction applied when a particle overshoots its target (velocity and
