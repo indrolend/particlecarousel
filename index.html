@@ -25,7 +25,7 @@
   ── Extending ──────────────────────────────────────────────────
   • Add slides: drop a GIF/PNG/SVG into assets/ and add an entry to
     DEFAULT_LOGOS with { label, src } pointing to the file.
-  • Tune physics: edit SPRING, DAMPING, DRIFT at the top of the script.
+  • Tune physics: edit SPRING, DAMPING, DAMPING_OVERSHOOT, DRIFT at the top of the script.
   • Tune explosion: edit EXPLODE_DURATION, EXPLODE_SPEED_MIN/MAX etc.
   • Full JS API: ParticleCarousel.next() / .prev() / .goTo(n) / .loadImage(img)
 -->
@@ -198,9 +198,9 @@
 
     // ── Explosion transition ──────────────────────────────────────────────
     const EXPLODE_DURATION  = 700;   // ms — how long particles fly outward
-    const EXPLODE_SPEED_MIN = 6;     // px/frame — minimum outward speed per particle
-    const EXPLODE_SPEED_MAX = 15;    // px/frame — maximum outward speed per particle
-    const EXPLODE_DAMPING   = 0.97;  // very light friction so particles keep flying
+    const EXPLODE_SPEED_MIN = 3;     // px/frame — minimum outward speed per particle
+    const EXPLODE_SPEED_MAX = 8;     // px/frame — maximum outward speed per particle
+    const EXPLODE_DAMPING   = 0.94;  // friction per frame — higher value = particles travel farther
     const EXPLODE_ALPHA     = 0.55;  // alpha target to fade toward during explosion
 
     // ── Default slides ────────────────────────────────────────────────────
